@@ -593,8 +593,7 @@ VIEWS.connect = () => {
 };
 function startCall() {
   const a = upcoming().filter(x => x.type === "화상")[0];
-  if (!a) return modal("예약날짜가 아닙니다.", "예약된 화상 상담이 없습니다.
-화상 상담을 먼저 예약해 주세요.", [{ label: "닫기", soft: true }, { label: "예약하기", onClick: () => go("booking", {}, true) }]);
+  if (!a) return modal("예약날짜가 아닙니다.", "예약된 화상 상담이 없습니다.\n화상 상담을 먼저 예약해 주세요.", [{ label: "닫기", soft: true }, { label: "예약하기", onClick: () => go("booking", {}, true) }]);
   if (a.date !== todayStr()) return modal("예약날짜가 아닙니다.", `상담 예정일: ${dots(a.date)} ${a.time}\n(D-${daysBetween(todayStr(), a.date)})`);
   modal("화상통화 시작", `${counselor(a.cid).name} ${counselor(a.cid).title}과 화상 상담을 시작할까요?`, [{ label: "취소", soft: true }, { label: "시작", onClick: () => go("call", { id: a.id }) }]);
 }
