@@ -1,0 +1,12 @@
+{
+  "name": "HWARO 위기상담",
+  "short_name": "HWARO",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#b5674a",
+  "lang": "ko",
+  "icons": [
+    { "src": "assets/logo.png", "sizes": "800x800", "type": "image/png", "purpose": "any" }
+  ]
+}
