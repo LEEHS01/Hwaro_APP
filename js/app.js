@@ -233,7 +233,7 @@ const todayShift = () => S.schedule?.[todayStr()] || null;
 const VIEWS = {};
 
 /* ── 로그인 / 내담자 등록 ── */
-let lg = { mode: "login", name: "", unit: "", birth: "", pw: "" };
+let lg = { mode: "login", name: "", unit: "", birth: "", pw: "", gender: "" };
 VIEWS.login = () => ({ noTab: true, html: `
   <div class="body" style="min-height:100vh;justify-content:center;gap:18px">
     <img src="assets/logo.png" alt="HWARO" style="width:170px;margin:0 auto">
@@ -248,6 +248,7 @@ VIEWS.login = () => ({ noTab: true, html: `
       ${lg.mode === "join" ? `<label class="muted">소속 (소방서 · 센터)</label><input id="lg-unit" class="inp" value="${esc(lg.unit)}" placeholder="○○소방서 ○○119안전센터" oninput="lg.unit=this.value">` : ""}
       <label class="muted">생년월일</label>
       <input id="lg-birth" class="inp" type="date" value="${esc(lg.birth)}" oninput="lg.birth=this.value">
+      ${lg.mode === "join" ? `<label class="muted">성별</label><div class="pill-row">${[["남", "남"], ["여", "여"], ["", "선택 안 함"]].map(([v, l]) => `<button class="pill ${lg.gender === v ? "" : "off"}" style="min-height:40px;font-size:14px" onclick="lg.gender='${v}';render()">${l}</button>`).join("")}</div>` : ""}
       ${Cloud.on ? `<label class="muted">비밀번호 ${lg.mode === "join" ? "(6자리 이상, 다른 폰에서 로그인할 때 사용)" : ""}</label>
       <input id="lg-pw" class="inp" type="password" value="${esc(lg.pw)}" placeholder="••••••" oninput="lg.pw=this.value" onkeydown="if(event.key==='Enter')loginSubmit()">` : ""}
       <button class="btn dark tall" onclick="loginSubmit()">${lg.mode === "login" ? "로그인" : "등록하고 자가진단 시작"}</button>
@@ -269,8 +270,8 @@ async function loginSubmit() {
         cloudBusy("로그인 중"); const uid = await Cloud.login(name, birth, pw); await enterCloudUser(uid); closeModal();
         lg = { mode: "login", name: "", unit: "", birth: "", pw: "" }; diagState = null; if (diagDue()) go("diag", {}, true); else home();
       } else {
-        cloudBusy("등록 중"); const prof = await Cloud.register(name, lg.unit.trim(), birth, pw); await enterCloudUser(prof.uid); closeModal();
-        lg = { mode: "login", name: "", unit: "", birth: "", pw: "" }; diagState = null; go("diag", {}, true);
+        cloudBusy("등록 중"); const prof = await Cloud.register(name, lg.unit.trim(), birth, pw, lg.gender); await enterCloudUser(prof.uid); closeModal();
+        lg = { mode: "login", name: "", unit: "", birth: "", pw: "", gender: "" }; diagState = null; go("diag", {}, true);
         modal("등록되었습니다", `${prof.name}님의 내담자 번호는 ${prof.no} 입니다.\n이제 첫 PTSD 자가진단을 시작합니다.`, [{ label: "자가진단 시작" }]);
       }
     } catch (e) { closeModal(); console.warn(e); modal(lg.mode === "login" ? "로그인 실패" : "등록 실패", Cloud.msg(e)); }
@@ -283,7 +284,7 @@ async function loginSubmit() {
   }
   if (!birth) return toast("생년월일을 입력해 주세요");
   if (U.list.some(x => x.name === name && x.birth === birth)) return toast("이미 등록된 내담자입니다. 로그인해 주세요");
-  const u = registerUser(name, lg.unit.trim(), birth); loginAs(u.id); lg = { mode: "login", name: "", unit: "", birth: "" };
+  const u = registerUser(name, lg.unit.trim(), birth); u.gender = lg.gender; saveUsers(); loginAs(u.id); lg = { mode: "login", name: "", unit: "", birth: "" };
   modal("등록되었습니다", `${u.name}님의 내담자 번호는 ${u.no} 입니다.\n이제 첫 PTSD 자가진단을 시작합니다.`, [{ label: "자가진단 시작", onClick: () => { diagState = null; go("diag", {}, true); } }]);
   diagState = null; go("diag", {}, true);
 }

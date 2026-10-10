@@ -63,7 +63,7 @@ const toMin = t => { const [h, m] = (t || "0:00").split(":").map(Number); return
 const fmtT = t => { const [h, m] = (t || "0:00").split(":").map(Number); const hh = h < 9 ? h + 12 : h; return `${pad(hh)}:${pad(m)}`; };
 
 /* ── 상태 ── */
-let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", results: {}, memos: {}, approvals: {}, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", busy: false };
+let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", busy: false };
 
 /* ── 모달/토스트 ── */
 function modal(html) { $("#modal-root").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
@@ -141,6 +141,7 @@ async function loadDetail(uid) {
     A.results[uid] = r; A.memos[uid] = m; A.approvals[uid] = ap; if (A.sel === uid) render();
   } catch (e) { toast(Cloud.msg(e)); }
 }
+async function assignCounselor(uid, cid) { try { await Cloud.db.collection("users").doc(uid).set({ counselor: cid }, { merge: true }); const u = (A.users || []).find(x => x.uid === uid); if (u) u.counselor = cid; toast(cid ? "담당 상담자를 지정했습니다" : "담당 지정을 해제했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
 function selectUser(uid) { A.sel = uid; A.tab = A.tab || "ptsd"; render(); if (!A.results[uid]) loadDetail(uid); }
 const cur = () => (A.users || []).find(u => u.uid === A.sel);
 
@@ -148,6 +149,7 @@ const cur = () => (A.users || []).find(u => u.uid === A.sel);
 function sortedUsers() {
   const q = A.q.trim();
   let list = (A.users || []).filter(u => !q || (u.name || "").includes(q) || (u.no || "").includes(q));
+  if (A.cfilter) list = list.filter(u => (u.counselor || "") === A.cfilter);
   if (A.filter === "booked") list = list.filter(u => nextAppt(u));
   if (A.filter === "active") list = list.filter(u => (u.data?.appts || []).length);
   if (A.filter === "done") list = list.filter(u => !nextAppt(u) && (u.data?.appts || []).length);
@@ -159,7 +161,7 @@ function clientList() {
   const row = u => { const s = signals(u), sc = lastScore(u), nx = nextAppt(u), ls = lastSession(u);
     return `<button class="crow ${A.sel === u.uid ? "on" : ""}" onclick="selectUser('${u.uid}')">
       <span class="avatar">${esc((u.name || "?")[0])}</span>
-      <span><div class="nm">${esc(u.name)}<small>${age(u.birth) != null ? age(u.birth) + "세" : ""}</small> ${sc != null ? badge(sc) : ""}</div>
+      <span><div class="nm">${esc(u.name)}<small>${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}</small> ${sc != null ? badge(sc) : ""}</div>
         <div class="meta">최근 ${ls ? md(ls) : "—"} · 다음 ${nx ? md(nx.date) : "미정"} ${nx && !(A.approvals[u.uid] || {})[nx.id] ? '<span class="chip gray">승인 대기</span>' : ""}</div>
         ${s.length ? `<div class="sig ${s[0].lv}">↑ ${esc(s[0].t)}</div>` : ""}</span>
       <span class="sc">${sc ?? ""}</span></button>`; };
@@ -168,7 +170,7 @@ function clientList() {
     <div class="tools">
       <input class="inp" placeholder="🔍 이름 · 등록번호 검색" value="${esc(A.q)}" oninput="A.q=this.value;render()">
       <div class="chips">${[["all", `전체 ${cnt.all}`], ["booked", `예약 대기 ${cnt.booked}`], ["active", `상담 중 ${cnt.active}`], ["done", "종결"]].map(([k, l]) => `<button class="${A.filter === k ? "on" : ""}" onclick="A.filter='${k}';render()">${l}</button>`).join("")}</div>
-      <div class="faint" style="display:flex;justify-content:space-between"><span>담당 상담자 · 전체</span><span>위험도 순</span></div>
+      <div class="faint" style="display:flex;justify-content:space-between;align-items:center"><select class="inp" style="width:auto;padding:2px 6px;font-size:12px" onchange="A.cfilter=this.value;render()"><option value="">담당 상담자 · 전체</option>${COUNSELORS.map(c => `<option value="${c.id}" ${A.cfilter === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select><span>위험도 순</span></div>
     </div>
     ${risky.length ? `<div class="sect">⚑ 위험 신호 · 상단 고정</div>${risky.map(row).join("")}` : ""}
     ${rest.length ? `<div class="sect">그 외 내담자</div>${rest.map(row).join("")}` : ""}
@@ -182,7 +184,8 @@ function centerView() {
   const d = Object.assign(blankData(u.name), u.data || {}), sc = lastScore(u), r = A.results[u.uid] || [];
   const head = `<div class="panel">
     <div class="dhead"><span class="avatar lg">${esc(u.name[0])}</span>
-      <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}</h1><div class="sm muted">${age(u.birth) != null ? age(u.birth) + "세 · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}</div></div>
+      <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}</h1><div class="sm muted">${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}${age(u.birth) != null || u.gender ? " · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}
+        · 담당 <select class="inp" style="width:auto;padding:1px 6px;font-size:12px;display:inline-block" onchange="assignCounselor('${u.uid}', this.value)"><option value="">미지정</option>${COUNSELORS.map(c => `<option value="${c.id}" ${u.counselor === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select></div></div>
       <span class="sp"></span>
       <button class="btn outline" onclick="printSummary()">🗎 요약지</button>
       <button class="btn primary" onclick="openSoapForm()">+ 회차 기록 작성</button></div>
@@ -271,7 +274,7 @@ function infoTab(u, d) {
   const chat = (d.chat || []).slice(-30);
   return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:16px">
     <div><div class="label" style="margin-bottom:6px">기본 정보</div>
-      <div class="kv"><span class="k">등록번호</span><span class="mono">${u.no}</span><span class="k">생년월일</span><span>${u.birth || "—"}${age(u.birth) != null ? ` (${age(u.birth)}세)` : ""}</span><span class="k">소속</span><span>${esc(u.unit || "—")}</span><span class="k">등록일</span><span>${u.createdAt || "—"}</span><span class="k">상담 동의</span><span>${d.consentAt ? d.consentAt.slice(0, 10) + " 동의" : '<span class="chip gray">미작성</span>'}</span><span class="k">오늘 근무</span><span>${d.schedule && d.schedule[todayStr()] ? SHIFT_TYPES[d.schedule[todayStr()]].label : "—"}</span></div></div>
+      <div class="kv"><span class="k">등록번호</span><span class="mono">${u.no}</span><span class="k">생년월일</span><span>${u.birth || "—"}${age(u.birth) != null ? ` (${age(u.birth)}세)` : ""}</span><span class="k">성별</span><span>${u.gender || "—"}</span><span class="k">담당 상담자</span><span>${u.counselor ? counselor(u.counselor).name + " " + counselor(u.counselor).title : "미지정"}</span><span class="k">소속</span><span>${esc(u.unit || "—")}</span><span class="k">등록일</span><span>${u.createdAt || "—"}</span><span class="k">상담 동의</span><span>${d.consentAt ? d.consentAt.slice(0, 10) + " 동의" : '<span class="chip gray">미작성</span>'}</span><span class="k">오늘 근무</span><span>${d.schedule && d.schedule[todayStr()] ? SHIFT_TYPES[d.schedule[todayStr()]].label : "—"}</span></div></div>
     <div><div class="label">예약</div>${(d.appts || []).length ? [...d.appts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(a => `<div class="entry"><div class="d"><span>${a.date.replace(/-/g, ".")} ${fmtT(a.time)} · ${counselor(a.cid).name} ${counselor(a.cid).title} · ${a.type}</span><span>${a.status === "done" ? "완료" : a.date < todayStr() ? "지남" : (A.approvals[u.uid] || {})[a.id]?.status === "confirmed" ? "승인됨" : "승인 대기"}</span></div></div>`).join("") : `<div class="faint">예약 없음</div>`}</div>
     <div><div class="label">하루일지 <span class="faint">최근 5건</span></div>${(d.daily || []).slice(-5).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")}</span><span class="mono">${x.score}%</span></div>${esc(x.text || "(내용 없음)")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
     <div><div class="label">상담일지 <span class="faint">내담자 작성</span></div>${(d.counsel || []).slice(-3).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")} · ${counselor(x.cid).name}</span><span>${"★".repeat(x.stars || 0)}</span></div>${esc(x.text || "")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
@@ -359,8 +362,9 @@ function statsView() {
   const newBy = months.map(m => us.filter(u => (u.createdAt || "").startsWith(m)).length), cum = []; newBy.reduce((a, b, i) => cum[i] = a + b, us.filter(u => (u.createdAt || "") < months[0]).length);
   const avgBy = months.map(m => { const v = []; us.forEach(u => (u.data?.diag || []).filter(x => x.date.startsWith(m)).forEach(x => v.push(x.score))); return v.length ? +(v.reduce((a, b) => a + b) / v.length).toFixed(1) : null; });
   const mon = addDays(t, -((parse(t).getDay() + 6) % 7)), sun = addDays(mon, 6);
-  const wk = allAppts().filter(a => a.date >= mon && a.date <= sun), ages = { "20대": 0, "30대": 0, "40대": 0, "50대+": 0 };
-  us.forEach(u => { const a = age(u.birth); if (a == null) return; ages[a < 30 ? "20대" : a < 40 ? "30대" : a < 50 ? "40대" : "50대+"]++; });
+  const wk = allAppts().filter(a => a.date >= mon && a.date <= sun), ages = { "20대": 0, "30대": 0, "40대": 0, "50대+": 0 }, agF = { ...ages }, agM = { ...ages };
+  us.forEach(u => { const a = age(u.birth); if (a == null) return; const k = a < 30 ? "20대" : a < 40 ? "30대" : a < 50 ? "40대" : "50대+"; ages[k]++; if (u.gender === "여") agF[k]++; else if (u.gender === "남") agM[k]++; });
+  const agesSvg = (() => { const W = 420, H = 150, keys = Object.keys(ages), n = keys.length, bw = (W - 40) / n, max = Math.max(1, ...Object.values(agF), ...Object.values(agM)); return `<svg class="chart" viewBox="0 0 ${W} ${H}">${keys.map((k, i) => { const x0 = 20 + i * bw; const b = (v, off, col) => { const h = (H - 40) * v / max; return `<rect x="${x0 + bw * off}" y="${H - 24 - h}" width="${bw * .22}" height="${h}" fill="${col}" rx="2"/><text x="${x0 + bw * off + bw * .11}" y="${H - 28 - h}" text-anchor="middle" font-size="10" fill="var(--ink)">${v}</text>`; }; return b(agF[k], .25, "var(--chart-intrusion)") + b(agM[k], .53, "var(--chart-avoidance)") + `<text x="${x0 + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${k}</text>`; }).join("")}</svg>`; })();
   const r = 56, c = 2 * Math.PI * r; let off = 0; const seg = (n, col) => { const len = scored ? n / scored * c : 0; const s = `<circle cx="75" cy="75" r="${r}" fill="none" stroke="${col}" stroke-width="18" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-off}" transform="rotate(-90 75 75)"/>`; off += len; return s; };
   const bars = (vals, col, max) => { const W = 420, H = 150, n = vals.length, bw = (W - 40) / n; return `<svg class="chart" viewBox="0 0 ${W} ${H}">${vals.map((v, i) => { const h = max ? (H - 40) * v / max : 0; return `<rect x="${20 + i * bw + bw * .3}" y="${H - 24 - h}" width="${bw * .4}" height="${h}" fill="${col}" rx="2"/><text x="${20 + i * bw + bw / 2}" y="${H - 28 - h}" text-anchor="middle" font-size="10" fill="var(--ink)">${v}</text><text x="${20 + i * bw + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${months[i] ? +months[i].slice(5) + "월" : Object.keys(ages)[i]}</text>`; }).join("")}</svg>`; };
   const lineSvg = (vals, max, min = 0) => { const W = 420, H = 150, n = vals.length, X = i => 30 + i * (W - 50) / (n - 1), Y = v => 16 + (H - 46) * (1 - (v - min) / (max - min || 1)); let p = ""; vals.forEach((v, i) => { if (v == null) return; p += (p ? " L" : "M") + X(i) + "," + Y(v); }); return `<svg class="chart" viewBox="0 0 ${W} ${H}"><line x1="30" x2="${W - 20}" y1="${Y(SET.t1)}" y2="${Y(SET.t1)}" stroke="var(--ink-muted)" stroke-dasharray="3 3"/><text x="${W - 18}" y="${Y(SET.t1) + 3}" font-size="9" fill="var(--ink-muted)">${SET.t1}</text><path d="${p}" fill="none" stroke="var(--chart-total)" stroke-width="2"/>${vals.map((v, i) => v == null ? "" : `<path d="M${X(i)},${Y(v) - 5} L${X(i) + 5},${Y(v)} L${X(i)},${Y(v) + 5} L${X(i) - 5},${Y(v)}Z" fill="var(--risk-mid)"/><text x="${X(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${+months[i].slice(5)}월</text>`).join("")}</svg>`; };
@@ -376,7 +380,7 @@ function statsView() {
       <div class="panel"><div class="panel-h"><span class="h2">월별 신규 · 누적 내담자</span><span class="legend-row"><span><i style="background:var(--brand)"></i>신규</span><span><i style="background:var(--chart-total);border-radius:50%"></i>누적 ${cum[5] || 0}</span></span></div>${bars(newBy, "var(--brand)", Math.max(1, ...newBy))}</div></div>
     <div class="stats-row2">
       <div class="panel"><div class="h2">IES-R-K 평균 점수 변화 <span class="faint">점선 ${SET.t1}점</span></div>${lineSvg(avgBy, Math.max(30, ...avgBy.filter(v => v != null)) + 4, 0)}</div>
-      <div class="panel"><div class="panel-h"><span class="h2">연령 분포</span><span class="faint">성별은 등록 항목에 없어 표시하지 않음</span></div>${bars(Object.values(ages), "var(--chart-intrusion)", Math.max(1, ...Object.values(ages)))}</div></div>
+      <div class="panel"><div class="panel-h"><span class="h2">연령 · 성별 분포</span><span class="legend-row"><span><i style="background:var(--chart-intrusion)"></i>여</span><span><i style="background:var(--chart-avoidance)"></i>남</span></span></div>${agesSvg}<div class="faint">성별 미선택 ${us.filter(u => age(u.birth) != null && !u.gender).length}명은 막대에서 제외</div></div></div>
   </div>`;
 }
 

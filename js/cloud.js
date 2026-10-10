@@ -40,10 +40,10 @@ const Cloud = {
     return "u" + [...bytes].map(b => b.toString(16).padStart(2, "0")).join("") + CLIENT_SUFFIX;
   },
   isClient(user) { return !!user && (user.email || "").endsWith(CLIENT_SUFFIX); },
-  async register(name, unit, birth, pw) {
+  async register(name, unit, birth, pw, gender) {
     const cred = await this.auth.createUserWithEmailAndPassword(this.synthEmail(name, birth), pw);
     const uid = cred.user.uid, no = await this.nextNo();
-    const prof = { uid, no, name: name.trim(), unit, birth, createdAt: todayStr() };
+    const prof = { uid, no, name: name.trim(), unit, birth, gender: gender || "", createdAt: todayStr() };
     await this.db.collection("users").doc(uid).set({ ...prof, data: blankData(prof.name), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
     return prof;
   },
