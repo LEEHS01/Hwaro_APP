@@ -280,3 +280,42 @@ input[type=range].slider { width: 100%; accent-color: var(--brand); margin: 12px
   .toast { bottom: calc(var(--tab-h) + 40px); }
   .call { border-radius: 34px; top: 20px; bottom: 20px; }
 }
+
+/* ───── 2차: 로고 확대 ───── */
+.hdr { height: 76px; grid-template-columns: 80px 1fr 80px; }
+.hdr .logo { height: 66px; width: 66px; }
+
+/* ───── 2차: 공통 입력 ───── */
+.inp { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; outline: none; background: var(--white); font-size: 16px; }
+.inp:focus { border-color: var(--brand); }
+
+/* ───── 2차: 하루일지 작성 예시 (회백색 안내문) ───── */
+.ta.ta-guide::placeholder { color: #8e8e8e; opacity: .55; text-align: left; line-height: 1.9; }
+
+/* ───── 2차: 채팅 버튼 ───── */
+.chat-btn { display: block; margin: 10px 0 2px; width: 100%; background: var(--brand); color: var(--white); border-radius: 12px; padding: 10px 12px; font-size: 14px; text-align: center; }
+.msg.bot .chat-btn:active { opacity: .85; }
+
+/* ───── 2차: 근무표 ───── */
+.sgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.sgrid .w { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
+.sd { min-height: 54px; border-radius: 10px; background: var(--white); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 4px 2px; gap: 3px; border: 2px solid transparent; }
+.sd:empty { background: transparent; }
+.sd .n { font-size: 13px; }
+.sd.sun .n { color: #d6473c; }
+.sd.today { border-color: var(--brand-soft); }
+.sd.sel { border-color: var(--brand); }
+.sd .sh { font-size: 11px; line-height: 1; padding: 4px 0; width: 100%; border-radius: 6px; text-align: center; color: #222; }
+.sd .sh.none { background: #f3eeec; height: 19px; }
+.mtable { display: grid; grid-template-columns: 58px 1fr 1fr 1fr; gap: 4px; }
+.mtable .mh { text-align: center; font-size: 12px; color: var(--brand); padding: 4px 0; }
+.mtable .md { font-size: 14px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: var(--white); border-radius: 8px; }
+.mtable .md small { font-size: 10px; color: var(--muted); }
+.mtable .md.today { outline: 2px solid var(--brand-soft); }
+.mtable .mc { font-size: 12px; border: 0; background: var(--white); border-radius: 8px; padding: 6px; resize: none; line-height: 1.4; min-width: 0; }
+.mtable .mc:focus { outline: 2px solid var(--brand-soft); }
+
+/* ───── 2차: 영상 썸네일 ───── */
+.vitem .th { position: relative; }
+.vitem .playov { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.18); border-radius: 10px; }
+.vitem .playov svg { fill: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }

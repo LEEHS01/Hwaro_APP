@@ -3,7 +3,10 @@
    (저장: 기기 내 localStorage, 서버 불필요)
 ═══════════════════════════════════════════════ */
 
-const STORE_KEY = "hwaro_v1";
+const LEGACY_KEY = "hwaro_v1";          // 1차 버전 저장소 (샘플 계정으로 이전)
+const USERS_KEY = "hwaro_users";         // 내담자 명부 (관리자 페이지용)
+const CUR_KEY = "hwaro_current";         // 현재 로그인한 내담자 id
+const ADMIN_PIN = "0000";                // 관리자 페이지 비밀번호
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /* ───────── 유틸 ───────── */
@@ -20,13 +23,42 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const counselor = id => COUNSELORS.find(c => c.id === id) || COUNSELORS[0];
 const nowTime = () => { const d = new Date(); return `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad(d.getMinutes())}`; };
 
-/* ───────── 상태 ───────── */
-let S = load();
-function load() {
-  try { const raw = localStorage.getItem(STORE_KEY); if (raw) return JSON.parse(raw); } catch (e) { }
-  return seed();
+/* ───────── 상태 (회원별 분리 저장) ─────────
+   U  : 내담자 명부 { seq, list: [{id, no, name, unit, birth, createdAt}] }
+   S  : 현재 로그인한 내담자의 데이터 (자가진단·예약·일지·채팅·근무표)
+   저장 위치는 이 기기의 localStorage. 관리자 페이지도 같은 기기의 명부를 읽는다. */
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
+let U = (() => { try { const r = lsGet(USERS_KEY); if (r) return JSON.parse(r); } catch (e) { } return { seq: 0, list: [] }; })();
+let curId = lsGet(CUR_KEY) || null;
+let S = null;
+function saveUsers() { lsSet(USERS_KEY, JSON.stringify(U)); }
+const dataKey = id => "hwaro_data_" + id;
+function loadData(id) { try { const r = lsGet(dataKey(id)); if (r) return JSON.parse(r); } catch (e) { } return null; }
+function saveData(id, data) { lsSet(dataKey(id), JSON.stringify(data)); }
+function save() { if (curId && S) saveData(curId, S); }
+function userById(id) { return U.list.find(u => u.id === id); }
+function newUserNo() { U.seq = (U.seq || 0) + 1; return "HW-" + String(U.seq).padStart(4, "0"); }
+function blankData(name) {
+  return { user: { name }, diag: [], lastDiag: null, appts: [], results: [], daily: [], counsel: [], chat: [], lastCid: null, schedule: {}, meals: {}, consentAt: null };
 }
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) { } }
+function registerUser(name, unit, birth, data) {
+  const id = uid() + Date.now().toString(36);
+  const u = { id, no: newUserNo(), name, unit, birth, createdAt: todayStr() };
+  U.list.push(u); saveUsers(); saveData(id, data || blankData(name)); return u;
+}
+function loginAs(id) { curId = id; lsSet(CUR_KEY, id); S = loadData(id) || blankData(userById(id)?.name || ""); if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; }
+function logout() { curId = null; S = null; try { localStorage.removeItem(CUR_KEY); } catch (e) { } }
+// 1차 버전 데이터가 있으면 '홍길동 (샘플)' 계정으로 이전, 없으면 샘플 계정 생성
+(function migrate() {
+  if (U.list.length) return;
+  let legacy = null; try { const r = lsGet(LEGACY_KEY); if (r) legacy = JSON.parse(r); } catch (e) { }
+  const data = legacy || seed(); data.schedule = data.schedule || sampleSchedule(); data.meals = data.meals || sampleMeals();
+  registerUser(data.user?.name || "홍길동", "○○소방서 (샘플)", "1990-01-01", data);
+})();
+function sampleSchedule() { const t = todayStr(), m = {}, seq = ["D", "N", "O"]; for (let i = -10; i <= 20; i++) m[addDays(t, i)] = seq[((i % 3) + 3) % 3]; return m; }
+function sampleMeals() { const w = weekKey(todayStr()); return { [w]: { "월": ["누룽지, 계란후라이", "제육볶음, 된장국", "닭갈비, 콩나물국"], "화": ["토스트, 우유", "김치찌개, 고등어구이", "불고기, 미역국"], "수": ["죽, 김", "순두부찌개, 오징어볶음", "카레라이스"], "목": ["시리얼, 바나나", "갈비탕", "돈까스, 우동"], "금": ["샌드위치", "비빔밥", "삼겹살, 상추"], "토": ["계란국, 김", "짜장밥", "치킨, 샐러드"], "일": ["빵, 잼", "라면, 김밥", "삼계탕"] } }; }
+function weekKey(ds) { const d = parse(ds), dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return ymd(d); }   // 그 주 월요일
 function seed() {
   const t = todayStr();
   return {
@@ -65,10 +97,9 @@ function seed() {
 
 /* ───────── 라우터 ───────── */
 const TABS = [
-  { id: "booking", label: "상담예약", icon: "cal" },
-  { id: "chat", label: "채팅상담", icon: "chat" },
+  { id: "care", label: "상담", icon: "chat" },
+  { id: "schedule", label: "근무표", icon: "cal" },
   { id: "records", label: "기록", icon: "note" },
-  { id: "connect", label: "상담시작", icon: "video" },
   { id: "info", label: "정보", icon: "info" }
 ];
 const ICONS = {
@@ -180,9 +211,216 @@ function dailyMsg(p) {
   return "많이 힘드셨죠. 오늘은 쉬어도 괜찮아요.";
 }
 function diagDue() { return !S.lastDiag || (Date.now() - parse(S.lastDiag).getTime()) >= WEEK_MS; }
+const todayShift = () => S.schedule?.[todayStr()] || null;
 
 /* ═══════════════ 화면들 ═══════════════ */
 const VIEWS = {};
+
+/* ── 로그인 / 내담자 등록 ── */
+let lg = { mode: "login", name: "", unit: "", birth: "" };
+VIEWS.login = () => ({ noTab: true, html: `
+  <div class="body" style="min-height:100vh;justify-content:center;gap:18px">
+    <img src="assets/logo.png" alt="HWARO" style="width:170px;margin:0 auto">
+    <div class="center" style="color:var(--brand);font-size:15px;margin-top:-10px">소방공무원 마음건강 위기상담</div>
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="pill-row" style="margin-bottom:4px">
+        <button class="pill ${lg.mode === "login" ? "" : "off"}" style="min-height:44px;font-size:15px" onclick="lg.mode='login';render()">로그인</button>
+        <button class="pill ${lg.mode === "join" ? "" : "off"}" style="min-height:44px;font-size:15px" onclick="lg.mode='join';render()">처음 이용</button>
+      </div>
+      <label class="muted">이름</label>
+      <input id="lg-name" class="inp" value="${esc(lg.name)}" placeholder="홍길동" oninput="lg.name=this.value">
+      ${lg.mode === "join" ? `<label class="muted">소속 (소방서 · 센터)</label><input id="lg-unit" class="inp" value="${esc(lg.unit)}" placeholder="○○소방서 ○○119안전센터" oninput="lg.unit=this.value">` : ""}
+      <label class="muted">생년월일</label>
+      <input id="lg-birth" class="inp" type="date" value="${esc(lg.birth)}" oninput="lg.birth=this.value">
+      <button class="btn dark tall" onclick="loginSubmit()">${lg.mode === "login" ? "로그인" : "등록하고 자가진단 시작"}</button>
+      ${lg.mode === "join" ? `<div class="muted" style="font-size:12px">등록하면 내담자 번호가 자동으로 부여되고, 첫 PTSD 자가진단이 바로 시작됩니다.</div>` : ""}
+    </div>
+    ${U.list.length ? `<div class="card" style="padding:12px 16px"><div class="muted" style="font-size:12px;margin-bottom:6px">이 기기에 등록된 내담자</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${U.list.map(u => `<button class="tag" style="background:#fff;color:var(--brand);padding:6px 12px;border-radius:999px;font-size:13px" onclick="quickLogin('${u.id}')">${esc(u.name)} <span class="muted">${u.no}</span></button>`).join("")}</div></div>` : ""}
+    <button class="muted" style="font-size:12px;text-decoration:underline" onclick="go('admin')">관리자 페이지</button>
+  </div>` });
+function loginSubmit() {
+  const name = lg.name.trim(), birth = lg.birth;
+  if (!name) return toast("이름을 입력해 주세요");
+  if (lg.mode === "login") {
+    const u = U.list.find(x => x.name === name && (!birth || x.birth === birth));
+    if (!u) return modal("등록된 내담자가 없습니다", "이름과 생년월일을 확인하거나 '처음 이용'으로 등록해 주세요.", [{ label: "확인" }, { label: "처음 이용", onClick: () => { lg.mode = "join"; render(); } }]);
+    quickLogin(u.id); return;
+  }
+  if (!birth) return toast("생년월일을 입력해 주세요");
+  if (U.list.some(x => x.name === name && x.birth === birth)) return toast("이미 등록된 내담자입니다. 로그인해 주세요");
+  const u = registerUser(name, lg.unit.trim(), birth); loginAs(u.id); lg = { mode: "login", name: "", unit: "", birth: "" };
+  modal("등록되었습니다", `${u.name}님의 내담자 번호는 ${u.no} 입니다.\n이제 첫 PTSD 자가진단을 시작합니다.`, [{ label: "자가진단 시작", onClick: () => { diagState = null; go("diag", {}, true); } }]);
+  diagState = null; go("diag", {}, true);
+}
+function quickLogin(id) { loginAs(id); lg = { mode: "login", name: "", unit: "", birth: "" }; diagState = null; if (diagDue()) go("diag", {}, true); else home(); }
+
+/* ── 상담 동의서 ── */
+let consentOk = false;
+VIEWS.consent = ({ next, params }) => ({ html: hdr("상담 동의") + `
+  <div class="body">
+    <div class="card wm" style="min-height:300px;display:flex;flex-direction:column;justify-content:center;gap:14px">
+      <div style="font-size:18px;color:var(--brand)">상담은 아래의 내용을 숙지해 주세요</div>
+      <ul style="margin:0;padding-left:18px;line-height:1.8;font-size:15px">${CONSENT_TEXT.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+      <label style="display:flex;align-items:center;gap:10px;margin-top:8px;font-size:16px;background:#fff;border-radius:12px;padding:12px 14px">
+        <input type="checkbox" id="consent-chk" style="width:22px;height:22px;accent-color:var(--brand)" ${consentOk ? "checked" : ""} onchange="consentOk=this.checked;document.getElementById('consent-go').disabled=!this.checked">
+        위 내용을 확인했으며 상담 진행에 동의합니다.
+      </label>
+    </div>
+    <button id="consent-go" class="btn dark tall" ${consentOk ? "" : "disabled"} onclick="consentDone('${next}')">동의하고 시작</button>
+    <button class="btn soft" onclick="consentOk=false;back()">취소</button>
+  </div>` });
+function consentDone(next) {
+  if (!consentOk) return; S.consentAt = new Date().toISOString(); save(); consentOk = false;
+  stack.pop();                                  // 동의 화면은 뒤로가기 경로에서 제외
+  if (next === "chat") go("chat", {}, true);
+  else if (next === "call") { const a = upcoming().filter(x => x.type === "화상")[0]; if (a) go("call", { id: a.id }, false); else home(); }
+  else go(next, {}, false);
+}
+
+/* ── 상담 (통합 허브) ── */
+VIEWS.care = () => {
+  const up = upcoming()[0], c = up ? counselor(up.cid) : null;
+  return { tab: "care", html: hdr("상 담", { close: "home()" }) + `
+    <div class="body">
+      <div class="card" onclick="go('bookingList')">
+        <div class="card-tt">나의 예약</div>
+        ${up ? `<div><b>${c.name} ${c.title}</b> · ${dots(up.date)} ${up.time} · ${up.type} <span class="tag" style="background:#fff;padding:2px 10px;border-radius:999px;font-size:12px;color:var(--brand)">D-${daysBetween(todayStr(), up.date) || "DAY"}</span></div>` : `<div class="muted">예정된 상담이 없습니다</div>`}
+      </div>
+      <div class="row2">
+        <button class="btn soft sq" onclick="go('booking')">상담예약<small class="muted">선생님 선택 · 날짜</small></button>
+        <button class="btn soft sq" onclick="chatOpen()">채팅상담<small class="muted">24시간</small></button>
+        <button class="btn soft sq" onclick="go('connect')">상담시작<small class="muted">화상 상담 연결</small></button>
+        <button class="btn soft sq" onclick="go('results')">상담결과<small class="muted">회차별 코멘트</small></button>
+      </div>
+      <button class="btn soft" onclick="go('bookingList')">예약 목록 · 변경 · 취소</button>
+    </div>` };
+};
+function chatOpen() { if (S.consentAt) go("chat"); else go("consent", { next: "chat" }); }
+
+/* ── 근무표: 스케줄표 + 식단표 ── */
+let sch = null, schTab = "shift";
+VIEWS.schedule = () => {
+  const t = todayStr();
+  if (!sch) { const d = parse(t); sch = { y: d.getFullYear(), m: d.getMonth(), sel: t, week: weekKey(t) }; }
+  if (schTab === "meal") return mealView();
+  const first = new Date(sch.y, sch.m, 1), days = new Date(sch.y, sch.m + 1, 0).getDate();
+  let cells = ""; for (let i = 0; i < first.getDay(); i++) cells += `<div class="sd"></div>`;
+  for (let d = 1; d <= days; d++) {
+    const ds = `${sch.y}-${pad(sch.m + 1)}-${pad(d)}`, code = S.schedule[ds], st = code && SHIFT_TYPES[code], dow = new Date(sch.y, sch.m, d).getDay();
+    cells += `<button class="sd ${ds === t ? "today" : ""} ${sch.sel === ds ? "sel" : ""} ${dow === 0 ? "sun" : ""}" onclick="schTap('${ds}')"><span class="n">${d}</span>${st ? `<span class="sh" style="background:${st.color}">${st.label}</span>` : `<span class="sh none"></span>`}</button>`;
+  }
+  const counts = {}; Object.entries(S.schedule).forEach(([k, v]) => { if (k.startsWith(`${sch.y}-${pad(sch.m + 1)}`)) counts[v] = (counts[v] || 0) + 1; });
+  const ts = todayShift();
+  return { tab: "schedule", html: hdr("근무표", { close: "home()" }) + `
+    <div class="body">
+      <div class="pill-row">
+        <button class="pill" style="min-height:48px" onclick="schTab='shift';render()">스케줄표</button>
+        <button class="pill off" style="min-height:48px" onclick="schTab='meal';render()">식단표</button>
+      </div>
+      <div class="card" style="padding:12px">
+        <div class="cal-h"><button onclick="schMonth(-1)">‹</button><span>${sch.y}년 ${sch.m + 1}월 <span class="muted" style="font-weight:400;font-size:12px">· 오늘 ${ts ? SHIFT_TYPES[ts].label : "미입력"}</span></span><button onclick="schMonth(1)">›</button></div>
+        <div class="sgrid">${["일", "월", "화", "수", "목", "금", "토"].map(w => `<div class="w">${w}</div>`).join("")}${cells}</div>
+        <div class="muted center" style="font-size:12px;margin-top:6px">날짜를 누를 때마다 주간 → 야간 → 비번 → 휴무 → 당번 → 없음 순으로 바뀝니다</div>
+      </div>
+      <div class="legend" style="flex-wrap:wrap;gap:10px 14px">${Object.entries(SHIFT_TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label} ${counts[k] ? `<b>${counts[k]}</b>` : ""}</span>`).join("")}</div>
+      <div class="card" style="padding:12px 14px">
+        <div class="muted" style="font-size:12px;margin-bottom:8px">교대 패턴으로 한 달 자동 채우기 (선택한 날짜 <b>${dots(sch.sel)}</b>부터 시작)</div>
+        <div style="display:flex;flex-direction:column;gap:8px">${SHIFT_PATTERNS.map((p, i) => `<button class="btn soft" style="min-height:44px;font-size:14px" onclick="schFill(${i})">${p.name}</button>`).join("")}</div>
+        <button class="btn soft" style="min-height:40px;font-size:13px;margin-top:8px;color:#b5423a" onclick="schClear()">이번 달 지우기</button>
+      </div>
+    </div>` };
+};
+function schMonth(n) { const d = new Date(sch.y, sch.m + n, 1); sch.y = d.getFullYear(); sch.m = d.getMonth(); render(); }
+function schTap(ds) {
+  const order = ["D", "N", "O", "H", "A", null], cur = S.schedule[ds] || null, next = order[(order.indexOf(cur) + 1) % order.length];
+  if (next) S.schedule[ds] = next; else delete S.schedule[ds];
+  sch.sel = ds; save(); render();
+}
+function schFill(i) {
+  const p = SHIFT_PATTERNS[i], start = sch.sel, days = new Date(sch.y, sch.m + 1, 0).getDate();
+  for (let d = 1; d <= days; d++) { const ds = `${sch.y}-${pad(sch.m + 1)}-${pad(d)}`; if (ds < start) continue; const k = daysBetween(start, ds) % p.seq.length; S.schedule[ds] = p.seq[k]; }
+  save(); toast(`${p.name} 패턴으로 채웠습니다`); render();
+}
+function schClear() { modal("이번 달 근무를 모두 지울까요?", `${sch.y}년 ${sch.m + 1}월`, [{ label: "아니오", soft: true }, { label: "지우기", onClick: () => { Object.keys(S.schedule).forEach(k => { if (k.startsWith(`${sch.y}-${pad(sch.m + 1)}`)) delete S.schedule[k]; }); save(); render(); } }]); }
+function mealView() {
+  const wk = sch.week, m = S.meals[wk] || {}, end = addDays(wk, 6);
+  return { tab: "schedule", html: hdr("근무표", { close: "home()" }) + `
+    <div class="body">
+      <div class="pill-row">
+        <button class="pill off" style="min-height:48px" onclick="schTab='shift';render()">스케줄표</button>
+        <button class="pill" style="min-height:48px" onclick="schTab='meal';render()">식단표</button>
+      </div>
+      <div class="card" style="padding:12px">
+        <div class="cal-h"><button onclick="mealWeek(-1)">‹</button><span>${dots(wk).slice(5)} ~ ${dots(end).slice(5)}</span><button onclick="mealWeek(1)">›</button></div>
+        <div class="mtable">
+          <div class="mh"></div>${MEAL_SLOTS.map(s => `<div class="mh">${s}</div>`).join("")}
+          ${DAY_NAMES.map((d, i) => { const ds = addDays(wk, i), sh = S.schedule[ds]; return `<div class="md ${ds === todayStr() ? "today" : ""}">${d}<small>${dots(ds).slice(8)}${sh ? ` · ${SHIFT_TYPES[sh].label}` : ""}</small></div>` + MEAL_SLOTS.map((s, j) => `<textarea class="mc" rows="2" placeholder="-" oninput="mealSet('${wk}','${d}',${j},this.value)">${esc((m[d] || [])[j] || "")}</textarea>`).join(""); }).join("")}
+        </div>
+        <div class="muted center" style="font-size:12px;margin-top:8px">칸을 눌러 바로 입력하면 자동 저장됩니다</div>
+      </div>
+    </div>` };
+}
+function mealWeek(n) { sch.week = addDays(sch.week, n * 7); render(); }
+function mealSet(wk, day, j, v) { S.meals[wk] = S.meals[wk] || {}; S.meals[wk][day] = S.meals[wk][day] || ["", "", ""]; S.meals[wk][day][j] = v; save(); }
+
+/* ── 관리자 페이지 (이 기기에 등록된 내담자) ── */
+let adminOk = false, adminSel = null, adminPin = "";
+VIEWS.admin = ({ id }) => {
+  if (!adminOk) return { noTab: true, html: hdr("관리자", { close: "adminOk=false;back()" }) + `
+    <div class="body" style="padding-top:60px">
+      <div class="card center" style="padding:28px 16px">
+        <div style="font-size:18px;color:var(--brand);margin-bottom:12px">관리자 비밀번호</div>
+        <input id="admin-pin" class="inp" type="password" inputmode="numeric" maxlength="8" placeholder="●●●●" style="text-align:center;font-size:22px;letter-spacing:8px" onkeydown="if(event.key==='Enter')adminLogin()">
+        <button class="btn dark" style="margin-top:14px" onclick="adminLogin()">입장</button>
+        <div class="muted" style="font-size:12px;margin-top:10px">초기 비밀번호 0000 · 이 기기에 등록된 내담자만 표시됩니다</div>
+      </div>
+    </div>` };
+  const sel = id ? userById(id) : null;
+  if (sel) {
+    const d = loadData(sel.id) || blankData(sel.name), dg = d.diag[d.diag.length - 1];
+    return { noTab: true, html: hdr("내담자 정보", { close: "go('admin',{},false);stack.pop()" }) + `
+      <div class="body">
+        <div class="pcard"><b>${esc(sel.name)} <span style="font-size:13px;opacity:.9">${sel.no}</span></b>${esc(sel.unit || "소속 미입력")}<br>생년월일 ${sel.birth || "-"} · 등록일 ${dots(sel.createdAt)}</div>
+        <div class="card"><div class="card-tt">PTSD 자가진단 이력</div>
+          ${d.diag.length ? barChart(d.diag.slice(-8).map(x => ({ label: weekLabel(x.date), value: x.score, color: diagGrade(x.score).color })), 88) + `<div class="muted">최근 ${dg.score}점 · ${diagGrade(dg.score).name} (${dots(dg.date)})</div>` : `<div class="empty">아직 검사 기록이 없습니다</div>`}</div>
+        <div class="card"><div class="card-tt">기록 현황</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+            <div><div style="font-size:24px;color:var(--brand)">${d.daily.length}</div><div class="muted" style="font-size:12px">하루일지</div></div>
+            <div><div style="font-size:24px;color:var(--brand)">${d.counsel.length}</div><div class="muted" style="font-size:12px">상담일지</div></div>
+            <div><div style="font-size:24px;color:var(--brand)">${d.appts.length}</div><div class="muted" style="font-size:12px">예약</div></div></div>
+          ${d.daily.length ? `<div class="entry" style="margin-top:10px"><div class="d"><span>최근 하루일지 ${dots(d.daily[d.daily.length - 1].date)}</span><span>${d.daily[d.daily.length - 1].score}%</span></div><p>${esc(d.daily[d.daily.length - 1].text || "(내용 없음)")}</p></div>` : ""}
+          ${d.consentAt ? `<div class="muted" style="font-size:12px;margin-top:8px">상담 동의: ${d.consentAt.slice(0, 10)}</div>` : `<div class="muted" style="font-size:12px;margin-top:8px">상담 동의서 미작성</div>`}</div>
+        <div class="card"><div class="card-tt">상담 결과 / 코멘트 입력 <span class="muted">(내담자 앱의 '상담결과'에 표시)</span></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <select id="ar-cid" class="inp" style="flex:1">${COUNSELORS.map(c => `<option value="${c.id}">${c.name} ${c.title}</option>`).join("")}</select>
+            <select id="ar-type" class="inp" style="width:90px"><option>대면</option><option>화상</option><option>채팅</option></select></div>
+          <textarea id="ar-text" class="ta" style="min-height:120px;background:#fff" placeholder="이번 회차 상담 결과와 다음 회차까지의 과제를 적어주세요"></textarea>
+          <button class="btn" style="margin-top:8px" onclick="adminAddResult('${sel.id}')">${d.results.length + 1}회차 결과 저장</button>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">${[...d.results].reverse().map(r => `<div class="entry"><div class="d"><span>${r.no}회차 · ${counselor(r.cid).name} ${counselor(r.cid).title} · ${r.type}</span><span>${dots(r.date)}</span></div><p>${esc(r.text)}</p></div>`).join("")}</div></div>
+        <button class="btn soft" style="color:#b5423a" onclick="adminDelete('${sel.id}')">이 내담자 삭제</button>
+      </div>` };
+  }
+  return { noTab: true, html: hdr("관리자 페이지", { close: "adminOk=false;back()" }) + `
+    <div class="body">
+      <div class="muted">등록 내담자 ${U.list.length}명 · 번호 순</div>
+      ${U.list.map(u => { const d = loadData(u.id), dg = d && d.diag[d.diag.length - 1]; return `<button class="pcard light" style="text-align:left" onclick="go('admin',{id:'${u.id}'})"><b>${esc(u.name)} <span style="font-size:13px">${u.no}</span></b>${esc(u.unit || "소속 미입력")} · 등록 ${dots(u.createdAt)}<br>${dg ? `최근 자가진단 <b style="display:inline;color:${diagGrade(dg.score).color}">${dg.score}점 ${diagGrade(dg.score).name}</b>` : "자가진단 기록 없음"} · 일지 ${d ? d.daily.length : 0}건</button>`; }).join("") || `<div class="empty">등록된 내담자가 없습니다</div>`}
+      <div class="muted" style="font-size:12px">※ 현재는 이 기기 안의 데이터만 보입니다. 여러 폰의 내담자를 한곳에서 보려면 서버(클라우드 DB) 연동이 필요합니다.</div>
+    </div>` };
+};
+function adminLogin() { if ($("#admin-pin").value === ADMIN_PIN) { adminOk = true; render(); } else toast("비밀번호가 틀렸습니다"); }
+function adminAddResult(id) {
+  const text = $("#ar-text").value.trim(); if (!text) return toast("내용을 입력해 주세요");
+  const d = loadData(id) || blankData(userById(id).name);
+  d.results.push({ no: d.results.length + 1, cid: $("#ar-cid").value, date: todayStr(), type: $("#ar-type").value, text });
+  saveData(id, d); if (id === curId) S = d; toast("저장되었습니다"); render();
+}
+function adminDelete(id) {
+  const u = userById(id); modal("내담자를 삭제할까요?", `${u.name} (${u.no})의 모든 기록이 지워집니다.`, [{ label: "아니오", soft: true }, { label: "삭제", onClick: () => {
+    U.list = U.list.filter(x => x.id !== id); saveUsers(); try { localStorage.removeItem(dataKey(id)); } catch (e) { }
+    if (id === curId) logout(); stack.pop(); go("admin", {}, false);
+  } }]);
+}
 
 /* ── 자가진단 (주 1회) ── */
 let diagState = null;
@@ -245,14 +483,16 @@ function diagFinish(score, next) {
 
 /* ── 홈 (p.12) ── */
 VIEWS.home = () => {
-  const up = upcoming()[0], last = pastAppts()[0];
+  const up = upcoming()[0], lastR = S.results[S.results.length - 1];
+  const last = pastAppts()[0] || (lastR ? { cid: lastR.cid, date: lastR.date, type: lastR.type } : null);
   const weeks = S.diag.slice(-5).map(d => ({ label: weekLabel(d.date), value: d.score }));
   const cur = latestDiag();
   return { tab: null, html: hdr("", { right: "search" }) + `
     <div class="body">
       <div class="card" onclick="go('bookingList')">
         <div class="card-tt">나의 예약 내역</div>
-        <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님</div>
+        <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님 <span class="muted" style="font-size:12px">${userById(curId)?.no || ""}</span></div>
+        ${todayShift() ? `<div class="muted" style="text-align:right;font-size:12px">오늘 근무: <b style="color:${SHIFT_TYPES[todayShift()].color};-webkit-text-stroke:.3px #777">${SHIFT_TYPES[todayShift()].label}</b></div>` : ""}
         ${up ? `<div class="dday">상담 예약일까지 <b>D-${daysBetween(todayStr(), up.date) || "DAY"}</b></div>
                 <div class="muted" style="text-align:right">${counselor(up.cid).name} ${counselor(up.cid).title} · ${dots(up.date)} ${up.time} · ${up.type}</div>`
             : `<div class="dday"><small>예정된 상담이 없습니다</small></div><div class="sec-link">상담 예약하기 ›</div>`}
@@ -317,7 +557,7 @@ VIEWS.results = ({ no }) => {
 
 /* ── 예약 (p.15) ── */
 let pickCid = null;
-VIEWS.booking = () => ({ tab: "booking", html: hdr("예약하기", { close: "home()" }) + `
+VIEWS.booking = () => ({ tab: "care", html: hdr("예약하기", { close: "go('care',{},true)" }) + `
   <div class="body">
     <div class="muted center" style="font-size:13px">선생님 프로필을 누르면 소개를 볼 수 있어요</div>
     <div class="cgrid">
@@ -415,13 +655,17 @@ function apptCancel() {
 }
 
 /* ── 채팅 상담 (p.18) ── */
-VIEWS.chat = () => ({ tab: "chat", html: hdr("채팅상담", { close: "home()" }) + `
+function msgHtml(m) {
+  const btn = m.btn ? `<button class="chat-btn" onclick="go('${m.to}')">👉 ${esc(m.btn)}</button>` : "";
+  return `<div class="msg ${m.role}">${esc(m.text)}${btn}<span class="ts">${esc(m.ts)}</span></div>`;
+}
+VIEWS.chat = () => ({ tab: "care", html: hdr("채팅상담", { close: "go('care',{},true)" }) + `
   <div class="chat-wrap">
-    <div class="chat-note">💬 <span>이용 시간: <b>24시간</b> · 대화 내용은 기기에 누적 저장됩니다.</span></div>
+    <div class="chat-note">💬 <span>이용 시간: <b>24시간</b> · 대화 내용은 모두 저장되어 이어서 볼 수 있습니다.</span></div>
     <div class="chat-list" id="chat-list">
-      <div class="msg sys">HWARO 채팅상담에 오신 것을 환영합니다</div>
-      ${S.chat.length ? S.chat.map(m => `<div class="msg ${m.role}">${esc(m.text)}<span class="ts">${esc(m.ts)}</span></div>`).join("")
-      : `<div class="msg bot">안녕하세요, ${esc(S.user.name)}님. HWARO 상담 챗봇입니다.\n지금 느끼는 감정이나 고민을 편하게 적어주세요. 긴급한 상황이면 1577-0199로 바로 전화해 주세요.<span class="ts">${nowTime()}</span></div>`}
+      <div class="msg sys">화로 채팅상담</div>
+      ${msgHtml({ role: "bot", text: CHAT_WELCOME, ts: "안내" })}
+      ${S.chat.map(msgHtml).join("")}
     </div>
     <div class="chat-in">
       <textarea id="chat-ta" placeholder="메시지를 입력하세요" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();chatSend()}"></textarea>
@@ -435,10 +679,14 @@ function chatSend() {
   list.insertAdjacentHTML("beforeend", `<div class="msg me">${esc(text)}<span class="ts">${nowTime()}</span></div><div class="msg bot" id="typing"><span class="typing"><i></i><i></i><i></i></span></div>`);
   list.scrollTop = list.scrollHeight;
   setTimeout(() => {
-    const rule = CHAT_RULES.find(r => r.k.some(k => text.includes(k)));
-    const reply = rule ? rule.r : CHAT_DEFAULT[S.chat.filter(m => m.role === "bot").length % CHAT_DEFAULT.length];
-    S.chat.push({ role: "bot", text: reply, ts: nowTime() }); save();
-    const t = $("#typing"); if (t) { t.id = ""; t.innerHTML = `${esc(reply)}<span class="ts">${nowTime()}</span>`; list.scrollTop = list.scrollHeight; }
+    // 1) 이용 안내 상황 → 안내 멘트 + 이동 버튼
+    const g = CHAT_GUIDES.find(r => r.k.some(k => text.includes(k)));
+    const replies = [];
+    if (g) replies.push({ role: "bot", text: g.r, btn: g.btn, to: g.to, ts: nowTime() });
+    // 2) 그 외 모든 상황 → 불안·위기 신호로 보고 상담자 연결 안내
+    else { replies.push({ role: "bot", text: CHAT_CRISIS, btn: "상담자 연결하기", to: "connect", ts: nowTime() }); replies.push({ role: "bot", text: CHAT_CRISIS_AFTER, ts: nowTime() }); }
+    S.chat.push(...replies); save();
+    const t = $("#typing"); if (t) { t.outerHTML = replies.map(msgHtml).join(""); list.scrollTop = list.scrollHeight; }
   }, 900 + Math.random() * 600);
 }
 
@@ -502,7 +750,8 @@ VIEWS.dailyWrite = ({ date }) => {
       <div class="donut-msg"><b id="donut-msg">${dailyMsg(pct)}</b><div>${esc(S.user.name)}님의 ${ds === todayStr() ? "하루" : dots(ds)}를 기록해 보세요.</div></div>
       <input type="range" class="slider" min="0" max="100" value="${pct}" oninput="dailySlide(this.value)">
       <div class="muted center" style="font-size:12px;margin-top:-4px">슬라이더를 움직여 오늘의 하루 점수를 정해주세요</div>
-      <textarea id="daily-ta" class="ta" placeholder="일지 작성&#10;(오늘의 하루를 가볍게 기록해 보세요)">${esc(e ? e.text : "")}</textarea>
+      <div class="muted center" style="font-size:13px;margin-bottom:-6px">일지 작성 (오늘의 하루를 가볍게 기록해 보세요)</div>
+      <textarea id="daily-ta" class="ta ta-guide" placeholder="${esc(DAILY_PLACEHOLDER)}">${esc(e ? e.text : "")}</textarea>
       <div class="row2">
         <button class="btn" onclick="back()">취소</button>
         <button class="btn" onclick="dailySave('${ds}')">저장</button>
@@ -579,7 +828,7 @@ VIEWS.connect = () => {
   if (dl && dl.text) topics.push(`하루일지 내용: "${dl.text.slice(0, 30)}${dl.text.length > 30 ? "…" : ""}"`);
   if (S.results.length) topics.push(`지난 회차 과제 점검 (${S.results[S.results.length - 1].no}회차 코멘트 참고)`);
   if (!topics.length) topics.push("첫 만남: 현재 어려움과 상담 목표 정하기");
-  return { tab: "connect", html: hdr("연 결", { close: "home()" }) + `
+  return { tab: "care", html: hdr("연 결", { close: "go('care',{},true)" }) + `
     <div class="body">
       <div class="card wm" style="min-height:380px">
         ${c ? `<div class="pcard" style="background:${c.color}"><b>${c.name} ${c.title}</b>${c.phone}<br>${esc(c.spec)}<br><span style="font-size:13px;opacity:.9">${esc(c.career)}</span><p style="margin:8px 0 0;font-size:13px">${esc(c.intro)}</p></div>
@@ -595,7 +844,7 @@ function startCall() {
   const a = upcoming().filter(x => x.type === "화상")[0];
   if (!a) return modal("예약날짜가 아닙니다.", "예약된 화상 상담이 없습니다.\n화상 상담을 먼저 예약해 주세요.", [{ label: "닫기", soft: true }, { label: "예약하기", onClick: () => go("booking", {}, true) }]);
   if (a.date !== todayStr()) return modal("예약날짜가 아닙니다.", `상담 예정일: ${dots(a.date)} ${a.time}\n(D-${daysBetween(todayStr(), a.date)})`);
-  modal("화상통화 시작", `${counselor(a.cid).name} ${counselor(a.cid).title}과 화상 상담을 시작할까요?`, [{ label: "취소", soft: true }, { label: "시작", onClick: () => go("call", { id: a.id }) }]);
+  modal("화상통화 시작", `${counselor(a.cid).name} ${counselor(a.cid).title}과 화상 상담을 시작할까요?\n시작 전 상담 동의서를 확인합니다.`, [{ label: "취소", soft: true }, { label: "시작", onClick: () => { consentOk = false; go("consent", { next: "call" }); } }]);
 }
 
 /* ── 화상 상담 (p.25) ── */
@@ -718,9 +967,9 @@ VIEWS.audioPlay = ({ id }) => {
 /* ── 영상 안정화 (p.31~32) ── */
 VIEWS.video = () => ({ html: hdr("안정화 훈련") + `
   <div class="body"><div class="card" style="background:#f4f4f6">
-    <div class="vlist">${VIDEO_LIST.map(v => `<a class="vitem" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(v.q)}" style="text-decoration:none;color:inherit">
-      <div class="th" style="background:${v.color}">${ICONS.play}</div><div><b>${v.title}</b><small>${v.desc}</small></div></a>`).join("")}</div>
-    <div class="muted center" style="font-size:12px;margin-top:12px">영상은 유튜브에서 재생됩니다 (인터넷 연결 필요)</div>
+    <div class="vlist">${VIDEO_LIST.map((v, i) => `<a class="vitem" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=${v.id}" style="text-decoration:none;color:inherit">
+      <div class="th" style="background:#eee url(https://img.youtube.com/vi/${v.id}/mqdefault.jpg) center/cover"><span class="playov">${ICONS.play}</span></div><div><b>${i + 1}. ${v.title}</b><small>${v.desc}</small></div></a>`).join("")}</div>
+    <div class="muted center" style="font-size:12px;margin-top:12px">순서대로 보세요 · 영상은 유튜브에서 재생됩니다 (인터넷 연결 필요)</div>
   </div></div>` });
 
 /* ── 치료 연계 (p.33) ── */
@@ -736,11 +985,15 @@ VIEWS.hospitals = () => ({ html: hdr("치료 연계") + `
 VIEWS.search = () => ({ html: hdr("", { close: "home()" }) + `
   <div class="search-in"><input id="sq" placeholder="메뉴 검색 (예: 예약, 일지, 안정화)" oninput="searchFilter(this.value)"></div>
   <div class="quick" id="quick">${quickBtns("")}</div>
-  <div class="body" style="padding-top:0"><button class="btn soft" style="min-height:44px;font-size:13px" onclick="resetData()">샘플 데이터 초기화</button></div>` });
-const QUICK = [["상담예약", "booking"], ["상담결과", "results"], ["채팅상담", "chat"], ["하루일지 작성", "dailyWrite"], ["자가진단", "diagDetail"], ["예약 목록", "bookingList"], ["상담일지", "counsel"], ["상담 시작", "connect"], ["PTSD란?", "ptsd"], ["안정화 훈련", "stab"], ["음성 안정화", "audio"], ["영상 안정화", "video"], ["치료연계", "hospitals"], ["지원제도", "support"]];
+  <div class="body" style="padding-top:0">
+    <div class="muted center" style="font-size:12px">${esc(S.user.name)} · ${userById(curId)?.no || ""} 로 로그인됨</div>
+    <div class="row2"><button class="btn soft" style="min-height:44px;font-size:13px" onclick="doLogout()">로그아웃 / 계정 전환</button><button class="btn soft" style="min-height:44px;font-size:13px" onclick="adminOk=false;go('admin')">관리자 페이지</button></div>
+    <button class="btn soft" style="min-height:44px;font-size:13px" onclick="resetData()">내 기록 초기화</button></div>` });
+function doLogout() { logout(); stack = []; current = null; go("login", {}, true); }
+const QUICK = [["상담예약", "booking"], ["상담결과", "results"], ["채팅상담", "chat"], ["하루일지 작성", "dailyWrite"], ["근무표", "schedule"], ["자가진단", "diagDetail"], ["예약 목록", "bookingList"], ["상담일지", "counsel"], ["상담 시작", "connect"], ["PTSD란?", "ptsd"], ["안정화 훈련", "stab"], ["음성 안정화", "audio"], ["영상 안정화", "video"], ["치료연계", "hospitals"], ["지원제도", "support"]];
 function quickBtns(q) { return QUICK.filter(([l]) => !q || l.includes(q)).slice(0, q ? 20 : 4).map(([l, v]) => `<button class="btn soft" onclick="go('${v}')">${l}</button>`).join("") || `<div class="empty">검색 결과가 없습니다</div>`; }
 function searchFilter(q) { $("#quick").innerHTML = quickBtns(q.trim()); }
-function resetData() { modal("모든 기록을 초기화할까요?", "자가진단·예약·일지·채팅 기록이 샘플 상태로 돌아갑니다.", [{ label: "아니오", soft: true }, { label: "초기화", onClick: () => { S = seed(); save(); diagState = null; go("diag", {}, true); } }]); }
+function resetData() { modal("내 기록을 초기화할까요?", "이 계정의 자가진단·예약·일지·채팅·근무표 기록이 모두 지워집니다.", [{ label: "아니오", soft: true }, { label: "초기화", onClick: () => { const nm = S.user.name; S = blankData(nm); save(); diagState = null; go("diag", {}, true); } }]); }
 
 /* ───────── 시작 ───────── */
 /* 안드로이드/브라우저 뒤로가기 버튼 처리
@@ -751,6 +1004,7 @@ function pushGuard() { if (!guardOn) { try { history.pushState({ hwaro: 1 }, "")
 window.addEventListener("popstate", () => {
   guardOn = false;
   if ($("#modal-root").firstChild) { closeModal(); pushGuard(); return; }
+  if (!S || current.name === "login") { if (current.name === "admin") { adminOk = false; go("login", {}, true); return; } toast("한 번 더 누르면 앱이 종료됩니다"); return; }
   if (current.name === "call") { endCall(current.params.id); pushGuard(); return; }
   if (current.name === "diag" && diagState && !diagState.force && diagState.step >= 0) { diagState.step = -1; render(); pushGuard(); return; }
   if (stack.length) { if (current.name === "diag") diagState = null; back(); pushGuard(); return; }
@@ -760,6 +1014,7 @@ window.addEventListener("popstate", () => {
 const _go = go;
 go = function (name, params, replace) { _go(name, params, replace); pushGuard(); };
 (function boot() {
-  if (diagDue()) _go("diag", {}, true); else home();
+  if (curId && userById(curId)) { loginAs(curId); if (diagDue()) _go("diag", {}, true); else home(); }
+  else { logout(); _go("login", {}, true); }
   pushGuard();
 })();
