@@ -60,6 +60,9 @@ async function enterCloudUser(uid) {
   S = Object.assign(blankData(doc.name), local || {}, doc.data || {});     // 서버 데이터 우선, 로컬 캐시 보조
   if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; S.user = S.user || { name: doc.name };
   saveData(uid, S);
+  // 관리자가 바꾼 콘텐츠(영상·병원·전화·상담사·공지): 캐시 먼저 적용, 서버값 오면 갱신
+  try { const cc = lsGet("hwaro_content"); if (cc) Cloud.applyContent(JSON.parse(cc)); } catch (e) { }
+  Cloud.loadContent().then(c => { if (!c) return; const { updatedAt, ...rest } = c; lsSet("hwaro_content", JSON.stringify(rest)); Cloud.applyContent(rest); if (current) render(); });
   Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
   // 상담사의 예약 승인·변경·취소 반영
   Cloud.db.collection("users").doc(uid).collection("approvals").onSnapshot(q => {
@@ -615,6 +618,7 @@ VIEWS.home = () => {
   const cur = latestDiag();
   return { tab: "home", html: hdr("", { right: "search" }) + `
     <div class="body">
+      ${window.APP_NOTICE ? `<div class="card" style="background:#fff7e6;border-left:4px solid #e2a33b"><div class="card-tt">공지</div><div style="white-space:pre-wrap;font-size:14px;line-height:1.5">${esc(window.APP_NOTICE.text)}</div></div>` : ""}
       <div class="card" onclick="go('bookingList')">
         <div class="card-tt">나의 예약 내역</div>
         <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님 <span class="muted" style="font-size:12px">${userById(curId)?.no || ""}</span></div>

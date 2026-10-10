@@ -63,7 +63,9 @@ const toMin = t => { const [h, m] = (t || "0:00").split(":").map(Number); return
 const fmtT = t => { const [h, m] = (t || "0:00").split(":").map(Number); const hh = h < 9 ? h + 12 : h; return `${pad(hh)}:${pad(m)}`; };
 
 /* ── 상태 ── */
-let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", statRange: 6, avail: null, busy: false };
+let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, nursing: {}, vitals: {}, content: null, ctab: "videos", chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", statRange: 6, avail: null, busy: false };
+// data.js 기본 콘텐츠 스냅샷 (콘텐츠 관리에서 "기본값으로" 되돌릴 때 사용 — applyContent가 배열을 제자리 교체하므로 먼저 복사)
+const DEF_CONTENT = JSON.parse(JSON.stringify({ videos: VIDEO_LIST, hospitals: HOSPITALS, helplines: HELPLINES, counselors: COUNSELORS, notice: { on: false, text: "" } }));
 
 /* ── 모달/토스트 ── */
 function modal(html) { $("#modal-root").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
@@ -80,19 +82,20 @@ function render() {
   if (A.view === "settings") return app.innerHTML = shell(settingsView(), true);
   if (A.view === "chats") return app.innerHTML = shell(chatsView(), true);
   if (A.view === "schedule") return app.innerHTML = shell(scheduleView(), true);
+  if (A.view === "content") return app.innerHTML = shell(contentView(), true);
   app.innerHTML = shell(clientList() + `<div class="center">${centerView()}</div><div class="right">${schedulePanel()}${memoPanel()}</div>`);
 }
 function shell(inner, wide) {
   const alerts = (A.users || []).filter(u => signals(u).some(s => s.lv === "h")).length;
   const chatAlerts = (A.users || []).filter(u => (u.data?.chat || []).some(m => m.role === "me" && /죽|자살|끝내|사라지|해치/.test(m.text))).length;
   const pending = allAppts().filter(a => a.status === "booked" && a.date >= todayStr() && !(A.approvals[a.uid] || {})[a.id]).length;
-  const nav = [["home", "홈", ICON.home], ["clients", "내담자", ICON.users], ["schedule", "일정", ICON.cal], ["chats", "채팅상담", ICON.chat, chatAlerts], ["stats", "통계", ICON.stats], ["settings", "설정", ICON.cog]];
+  const nav = [["home", "홈", ICON.home], ["clients", "내담자", ICON.users], ["schedule", "일정", ICON.cal], ["chats", "채팅상담", ICON.chat, chatAlerts], ["stats", "통계", ICON.stats], ["content", "콘텐츠", ICON.book], ["settings", "설정", ICON.cog]];
   const notis = alerts + pending;
   return `<div class="shell">
     <div class="topbar"><span class="wordmark">화로</span><span class="chip">관리자</span><span class="sp"></span>
       <button class="bell" title="위험 신호 ${alerts} · 승인 대기 ${pending}" onclick="showNotis()">${ICON.bell}${notis ? `<span class="badge">${notis}</span>` : ""}</button>
       <span class="avatar">${esc((SET.name || A.email)[0])}</span><span class="sm">${esc(SET.name || A.email)}</span>
-      <button class="btn outline sm" onclick="doLogout()">⎋ 로그아웃</button></div>
+      <button class="btn outline sm" onclick="doLogout()">${ICON.logout} 로그아웃</button></div>
     <div class="main ${wide ? "wide" : ""}">
       <nav class="rail">${nav.map(([v, l, ic, n]) => `<button class="${(A.view === v || (v === "clients" && A.view === "home")) && !(v === "home" && A.view === "clients") ? "on" : ""}" onclick="A.view='${v === "home" ? "clients" : v}';render()">${ic}<span>${l}</span>${n ? `<span class="badge">${n}</span>` : ""}</button>`).join("")}</nav>
       ${inner}</div></div>`;
@@ -107,7 +110,16 @@ const ICON = {
   cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
   eye: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
-  pin: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M14 2l8 8-4 1-3 3 1 6-3-3-6 6-1-1 6-6-3-3 6 1 3-3z"/></svg>'
+  pin: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M14 2l8 8-4 1-3 3 1 6-3-3-6 6-1-1 6-6-3-3 6 1 3-3z"/></svg>',
+  book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4zM20 4h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg>',
+  logout: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9"/></svg>',
+  print: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8V3h10v5M5 8h14a2 2 0 0 1 2 2v6h-4v5H7v-5H3v-6a2 2 0 0 1 2-2zM7 14h10"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4h12l-2 4 2 4H5"/></svg>',
+  play: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M7 4l12 8-12 8z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
+  check: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>'
 };
 
 /* ── 로그인 ── */
@@ -137,14 +149,19 @@ async function doLogin() {
 }
 async function doLogout() { try { await Cloud.auth.signOut(); } catch (e) { } A = Object.assign(A, { email: null, users: null, sel: null, results: {}, memos: {} }); render(); }
 async function loadUsers() {
-  try { A.users = await Cloud.listUsers(); if (!A.sel && A.users.length) A.sel = sortedUsers()[0]?.uid; render(); if (A.sel) loadDetail(A.sel); }
+  try {
+    const c = await Cloud.loadContent(); if (c) { Cloud.applyContent(c); A.content = normContent(c); }
+    A.users = await Cloud.listUsers(); if (!A.sel && A.users.length) A.sel = sortedUsers()[0]?.uid; render(); if (A.sel) loadDetail(A.sel);
+  }
   catch (e) { A.users = []; render(); toast(Cloud.msg(e)); }
 }
 async function loadDetail(uid) {
   try {
-    const [r, m, ap] = await Promise.all([Cloud.loadResults(uid), Cloud.db.collection("users").doc(uid).collection("memos").orderBy("createdAt", "desc").get().then(q => q.docs.map(d => ({ id: d.id, ...d.data() }))).catch(() => []),
-      Cloud.db.collection("users").doc(uid).collection("approvals").get().then(q => Object.fromEntries(q.docs.map(d => [d.id, d.data()]))).catch(() => ({}))]);
-    A.results[uid] = r; A.memos[uid] = m; A.approvals[uid] = ap; if (A.sel === uid) render();
+    const sub = (name, order) => { let q = Cloud.db.collection("users").doc(uid).collection(name); if (order) q = q.orderBy(order, "desc"); return q.get().then(q => q.docs.map(d => ({ id: d.id, ...d.data() }))).catch(() => []); };
+    const [r, m, ap, nd, vt] = await Promise.all([Cloud.loadResults(uid), sub("memos", "createdAt"),
+      Cloud.db.collection("users").doc(uid).collection("approvals").get().then(q => Object.fromEntries(q.docs.map(d => [d.id, d.data()]))).catch(() => ({})),
+      sub("nursing", "createdAt"), sub("vitals", "date")]);
+    A.results[uid] = r; A.memos[uid] = m; A.approvals[uid] = ap; A.nursing[uid] = nd; A.vitals[uid] = vt; if (A.sel === uid) render();
   } catch (e) { toast(Cloud.msg(e)); }
 }
 async function assignCounselor(uid, cid) { try { await Cloud.db.collection("users").doc(uid).set({ counselor: cid }, { merge: true }); const u = (A.users || []).find(x => x.uid === uid); if (u) u.counselor = cid; toast(cid ? "담당 상담자를 지정했습니다" : "담당 지정을 해제했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
@@ -174,11 +191,11 @@ function clientList() {
   const cnt = { all: all.length, booked: all.filter(u => nextAppt(u)).length, active: all.filter(u => (u.data?.appts || []).length).length };
   return `<div class="col clist">
     <div class="tools">
-      <input class="inp" placeholder="🔍 이름 · 등록번호 검색" value="${esc(A.q)}" oninput="A.q=this.value;render()">
+      <input class="inp" placeholder="이름 · 등록번호 검색" value="${esc(A.q)}" oninput="A.q=this.value;render()">
       <div class="chips">${[["all", `전체 ${cnt.all}`], ["booked", `예약 대기 ${cnt.booked}`], ["active", `상담 중 ${cnt.active}`], ["done", "종결"]].map(([k, l]) => `<button class="${A.filter === k ? "on" : ""}" onclick="A.filter='${k}';render()">${l}</button>`).join("")}</div>
       <div class="faint" style="display:flex;justify-content:space-between;align-items:center"><select class="inp" style="width:auto;padding:2px 6px;font-size:12px" onchange="A.cfilter=this.value;render()"><option value="">담당 상담자 · 전체</option>${COUNSELORS.map(c => `<option value="${c.id}" ${A.cfilter === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select><span>위험도 순</span></div>
     </div>
-    ${risky.length ? `<div class="sect">⚑ 위험 신호 · 상단 고정</div>${risky.map(row).join("")}` : ""}
+    ${risky.length ? `<div class="sect">${ICON.flag} 위험 신호 · 상단 고정</div>${risky.map(row).join("")}` : ""}
     ${rest.length ? `<div class="sect">그 외 내담자</div>${rest.map(row).join("")}` : ""}
     ${!list.length ? `<div class="empty">내담자가 없습니다</div>` : ""}
   </div>`;
@@ -193,10 +210,10 @@ function centerView() {
       <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}</h1><div class="sm muted">${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}${age(u.birth) != null || u.gender ? " · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}
         · 담당 <select class="inp" style="width:auto;padding:1px 6px;font-size:12px;display:inline-block" onchange="assignCounselor('${u.uid}', this.value)"><option value="">미지정</option>${COUNSELORS.map(c => `<option value="${c.id}" ${u.counselor === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select></div></div>
       <span class="sp"></span>
-      <button class="btn outline" onclick="printSummary()">🗎 요약지 PDF</button>
-      <button class="btn primary" onclick="openSoapForm()">+ 회차 기록 작성</button></div>
-    <div class="tabs">${[["info", "내담자 정보"], ["ptsd", "PTSD 사정"], ["nursing", "간호진단명"], ["objective", "객관적 정보"], ["comments", "회차별 코멘트"]].map(([k, l]) => `<button class="${A.tab === k ? "on" : ""}" onclick="A.tab='${k}';render()">${l}</button>`).join("")}</div>
-    ${A.tab === "ptsd" ? ptsdTab(u, d) : A.tab === "comments" ? commentsTab(u, d, r) : A.tab === "nursing" ? `<div class="empty">간호진단명 탭 · 디자인 문서에 "아직 없는 화면"으로 표시되어 내용 확정 후 구현 예정입니다.<br><span class="faint">NANDA-I 진단명 목록과 관련 요인 입력란이 들어갈 자리</span></div>` : A.tab === "objective" ? `<div class="empty">객관적 정보 탭 · 디자인 문서에 "아직 없는 화면"으로 표시되어 내용 확정 후 구현 예정입니다.<br><span class="faint">수면·활력징후 등 상담자가 측정한 객관적 지표가 들어갈 자리</span></div>` : infoTab(u, d)}
+      <button class="btn outline" onclick="printSummary()">${ICON.print} 요약지 PDF</button>
+      <button class="btn primary" onclick="openSoapForm()">${ICON.plus} 회차 기록 작성</button></div>
+    <div class="tabs">${[["info", "내담자 정보"], ["ptsd", "PTSD 사정"], ["nursing", "간호진단명", (A.nursing[u.uid] || []).filter(x => x.status !== "resolved").length], ["objective", "객관적 정보"], ["comments", "회차별 코멘트"]].map(([k, l, n]) => `<button class="${A.tab === k ? "on" : ""}" onclick="A.tab='${k}';render()">${l}${n ? ` <span class="chip">${n}</span>` : ""}</button>`).join("")}</div>
+    ${A.tab === "ptsd" ? ptsdTab(u, d) : A.tab === "comments" ? commentsTab(u, d, r) : A.tab === "nursing" ? nursingTab(u, d) : A.tab === "objective" ? objectiveTab(u, d) : infoTab(u, d)}
   </div>`;
   return head + (A.tab === "ptsd" ? `<div class="panel">${scoreChartPanel(d, r)}</div>` : "");
 }
@@ -334,7 +351,7 @@ function apptRow(a, isNext) {
   const hint = topicHint(a.uid);
   return `<div class="srow ${isNext ? "next" : ""}"><span class="t">${fmtT(e.time)}</span><div><b>${esc(a.name)} · ${last ? last.no : a.sessionNo}회차</b>
     <div class="faint">${a.type}${done ? " · 완료" : last && last.topic ? ` · 주제: ${esc(last.topic)}` : hint ? ` · 주제 후보 <b>${hint}</b>` : ""}${e.changed ? " · 변경됨" : ""}</div>
-    ${done ? "" : `<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${!(ap?.status === "confirmed" || ap?.date) ? '<span class="chip gray">승인 대기</span>' : ""}${isNext ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">▶ 상담 시작</button>` : ""}</div>`}</div></div>`;
+    ${done ? "" : `<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${!(ap?.status === "confirmed" || ap?.date) ? '<span class="chip gray">승인 대기</span>' : ""}${isNext ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">${ICON.play} 상담 시작</button>` : ""}</div>`}</div></div>`;
 }
 function schedulePanel() {
   const t = todayStr(), all = allAppts().map(effAppt), mon = addDays(t, -((parse(t).getDay() + 6) % 7));
@@ -473,8 +490,203 @@ function printSummary() {
     <h1>화로 상담 요약지 · ${esc(u.name)} <small>${u.no}</small></h1><div>생년월일 ${u.birth || "-"} · 소속 ${esc(u.unit || "-")} · 등록 ${u.createdAt || "-"} · 출력 ${todayStr()}</div>
     <h2>IES-R-K 최근 결과</h2>${last ? `총점 ${last.score}/88 (${risk(last.score).name}, ${last.date})${sub ? `<br>침입 ${sub.intrusion}/32 · 회피 ${sub.avoidance}/32 · 과각성 ${sub.hyper}/24` : ""}` : "기록 없음"}
     <h2>검사 이력</h2><table><tr><th>날짜</th><th>총점</th><th>판정</th></tr>${d.diag.map(x => `<tr><td>${x.date}</td><td>${x.score}</td><td>${risk(x.score).name}</td></tr>`).join("")}</table>
+    <h2>간호진단 (NANDA-I)</h2>${(A.nursing[u.uid] || []).filter(x => x.status !== "resolved").map(x => `<p><b>${esc(x.label)}</b> <small>${x.code} · ${esc(x.en || "")}</small><br>관련 요인: ${esc((x.related || []).join(", ") || "-")}<br>증상·징후: ${esc((x.evidence || []).join(", ") || "-")}<br>목표: ${esc(x.goal || "-")}<br>계획: ${esc(x.plan || "-")}</p>`).join("") || "없음"}
+    <h2>상담자 측정 기록 (최근 5건)</h2>${(A.vitals[u.uid] || []).slice(0, 5).map(v => `<p><b>${v.date}</b> · 수면 ${v.sleepH ?? "-"}시간 (질 ${v.sleepQ ?? "-"}/5) · 음주 ${v.alcohol ?? "-"}회/주 · 카페인 ${v.caffeine ?? "-"}잔/일 · 혈압 ${v.sbp || "-"}/${v.dbp || "-"} · 맥박 ${v.pulse || "-"}${v.meds ? ` · 복약 ${esc(v.meds)}` : ""}${v.obs ? `<br>관찰: ${esc(v.obs)}` : ""}</p>`).join("") || "없음"}
     <h2>회차별 기록</h2>${r.map(x => `<p><b>${x.no}회차 · ${x.date} · ${x.type}</b>${x.topic ? ` · 주제: ${esc(x.topic)}` : ""}<br>S: ${esc(x.s || "-")}<br>O: ${esc(x.o || "-")}<br>A: ${esc(x.a || "-")}<br>P: ${esc(x.p || "-")}<br>공개 코멘트: ${esc(x.text || "-")}</p>`).join("") || "없음"}
     <script>window.print()<\/script></body></html>`); w.document.close();
+}
+
+/* ═══════════════ 간호진단명 탭 (NANDA-I) ═══════════════
+   users/{uid}/nursing/{id} = { code,label,en, related:[], evidence:[], goal, plan, status:"active"|"resolved", date, by }
+   자동 제안은 IES-R-K 문항·하위영역·하루일지·채팅 신호에서 계산하고, 확정은 상담자가 한다. */
+const NANDA = [
+  { code: "00141", label: "외상 후 증후군", en: "Post-Trauma Syndrome", rel: ["외상성 사건에 대한 반복 노출", "심각한 사고·사상자 목격", "자신의 생명을 위협받는 상황", "동료 상실"], def: ["침습적 기억·플래시백", "악몽", "사건 회상 시 신체 반응", "과경계", "정서적 무감각", "사건 관련 자극 회피"] },
+  { code: "00145", label: "외상 후 증후군 위험성", en: "Risk for Post-Trauma Syndrome", rel: ["외상 노출 직후 기간", "지지 체계 부족", "반복 출동", "이전 외상 경험"], def: [] },
+  { code: "00146", label: "불안", en: "Anxiety", rel: ["상황적 위기", "스트레스 요인", "위협에 대한 지각", "미충족 욕구"], def: ["신경 예민·쉽게 놀람", "안절부절", "집중 곤란", "두근거림·발한", "걱정 호소"] },
+  { code: "00148", label: "두려움", en: "Fear", rel: ["익숙하지 않은 상황", "위협 자극", "학습된 반응"], def: ["특정 상황 회피", "긴장 증가", "두려움 언어화"] },
+  { code: "00198", label: "수면 양상 장애", en: "Disturbed Sleep Pattern", rel: ["교대 근무로 인한 수면 주기 변화", "야간 출동", "환경적 방해 요인", "불안"], def: ["잠들기 어려움", "자주 깸", "악몽으로 각성", "주간 피로", "수면 불만족"] },
+  { code: "00095", label: "불면증", en: "Insomnia", rel: ["불안", "두려움", "카페인·음주", "불규칙한 수면 일정", "신체 불편감"], def: ["수면 개시 어려움 지속", "수면 유지 어려움", "이른 각성", "기능 저하 호소"] },
+  { code: "00069", label: "비효과적 대처", en: "Ineffective Coping", rel: ["부적절한 지지 체계", "높은 수준의 위협", "휴식 부족", "대처 전략 부족"], def: ["문제 해결 능력 저하", "음주·회피로 대처", "도움 요청 못 함", "집중 곤란", "피로"] },
+  { code: "00125", label: "무력감", en: "Powerlessness", rel: ["통제할 수 없는 사건", "반복되는 좌절", "낮은 자기효능감"], def: ["통제력 상실 표현", "수동성", "하루일지 기분 지속 저조", "의욕 저하"] },
+  { code: "00053", label: "사회적 고립", en: "Social Isolation", rel: ["교대 근무로 인한 관계 단절", "사건 관련 이야기 회피", "정서적 무감각"], def: ["대인 접촉 회피", "혼자 있고 싶다는 표현", "사건 이야기 거부", "가족·동료와 거리감"] },
+  { code: "00289", label: "자살행동 위험성", en: "Risk for Suicidal Behavior", rel: ["무망감", "외상 후 증상", "사회적 고립", "음주", "충동성"], def: [] },
+  { code: "00301", label: "부적응적 비애", en: "Maladaptive Grieving", rel: ["동료·요구조자 사망", "애도 과정 방해", "지지 부족"], def: ["지속되는 슬픔", "죄책감", "일상 기능 저하", "사망 사건 반복 회상"] },
+  { code: "00119", label: "만성 낮은 자존감", en: "Chronic Low Self-Esteem", rel: ["반복된 실패 경험", "구조 실패에 대한 자책", "부정적 피드백"], def: ["자기 비난", "자신의 역할 평가절하", "결정 주저"] },
+  { code: "00093", label: "피로", en: "Fatigue", rel: ["수면 박탈", "교대 근무", "지속적 긴장", "불안"], def: ["에너지 부족 호소", "집중 곤란", "일상 활동 수행 저하", "졸림"] },
+  { code: "00066", label: "영적 고뇌", en: "Spiritual Distress", rel: ["삶의 의미에 대한 혼란", "죽음 목격", "죄책감"], def: ["의미·목적에 대한 질문", "희망 상실 표현", "분노"] },
+  { code: "00060", label: "가족 과정 중단", en: "Interrupted Family Processes", rel: ["교대 근무", "정서적 철수", "역할 변화"], def: ["가족과의 소통 감소", "가족 갈등 호소", "가정 내 역할 수행 어려움"] }
+];
+const nanda = code => NANDA.find(n => n.code === code);
+// 문항 점수 조회 (1부터 시작하는 문항 번호)
+const itemScore = (dg, i) => dg && dg.answers && dg.answers.length >= 22 ? (dg.answers[i - 1] || 0) : null;
+const nightCount = (d, days) => { const from = addDays(todayStr(), -days); return Object.entries(d.schedule || {}).filter(([k, v]) => k >= from && k <= todayStr() && (v === "N" || v === "A")).length; };
+function suggestNursing(u, d) {
+  const dg = d.diag, last = dg[dg.length - 1]; if (!last) return [];
+  const sub = subscales(last.answers), it = i => itemScore(last, i), out = [], add = (code, why, ev) => { const x = out.find(o => o.code === code); if (x) { if (why) x.why.push(why); if (ev) x.ev.push(...ev); } else out.push({ code, why: why ? [why] : [], ev: ev || [] }); };
+  if (last.score >= SET.t2) add("00141", `IES-R-K ${last.score}점 · ${risk(last.score).name} 구간`, [it(14) >= 3 ? "침습적 기억·플래시백" : null, it(20) >= 3 ? "악몽" : null, it(19) >= 3 ? "사건 회상 시 신체 반응" : null, it(21) >= 3 ? "과경계" : null, it(13) >= 3 ? "정서적 무감각" : null].filter(Boolean));
+  else if (last.score >= SET.t1) add("00145", `IES-R-K ${last.score}점 · 임상적 관심 구간`);
+  if (sub && (sub.hyper / 24 >= .5 || it(4) >= 3 || it(10) >= 3)) add("00146", `과각성 ${sub.hyper}/24`, [it(10) >= 3 ? "신경 예민·쉽게 놀람" : null, it(18) >= 3 ? "집중 곤란" : null, it(19) >= 3 ? "두근거림·발한" : null].filter(Boolean));
+  if (it(2) >= 3 && it(15) >= 3) add("00095", `수면 문항 2·15번 ${it(2)}·${it(15)}점`, ["수면 개시 어려움 지속", "수면 유지 어려움"]);
+  else if (it(2) >= 2 || it(15) >= 2 || it(20) >= 3) add("00198", `수면 문항 ${[it(2) >= 2 ? "2번" : "", it(15) >= 2 ? "15번" : "", it(20) >= 3 ? "20번(꿈)" : ""].filter(Boolean).join("·")}`, [it(15) >= 2 ? "잠들기 어려움" : null, it(2) >= 2 ? "자주 깸" : null, it(20) >= 3 ? "악몽으로 각성" : null].filter(Boolean));
+  if (nightCount(d, 30) >= 8) add("00198", `최근 30일 야간·당번 ${nightCount(d, 30)}회`);
+  if (sub && sub.avoidance / 32 >= .5) add("00069", `회피 ${sub.avoidance}/32`, [it(17) >= 3 ? "회피로 대처" : null].filter(Boolean));
+  if (it(8) >= 3 && it(22) >= 3) add("00053", "회피 문항 8·22번 높음", ["사건 이야기 거부", "대인 접촉 회피"]);
+  if ((d.chat || []).filter(m => m.role === "me").slice(-10).some(m => /죽|자살|끝내|사라지|해치/.test(m.text))) add("00289", "채팅 위기 표현 감지");
+  const dl = (d.daily || []).slice(-3); if (dl.length === 3 && dl.every(x => x.score < 40)) add("00125", "하루일지 3일 연속 40% 미만", ["하루일지 기분 지속 저조"]);
+  if (it(18) >= 3 && (it(2) >= 2 || it(15) >= 2)) add("00093", "집중 곤란 + 수면 문항 높음", ["집중 곤란", "졸림"]);
+  return out;
+}
+function nursingTab(u, d) {
+  const list = A.nursing[u.uid] || [], active = list.filter(x => x.status !== "resolved"), done = list.filter(x => x.status === "resolved");
+  const sug = suggestNursing(u, d).filter(s => !active.some(x => x.code === s.code));
+  const chips = arr => arr.length ? arr.map(t => `<span class="chip gray">${esc(t)}</span>`).join(" ") : '<span class="faint">—</span>';
+  const card = x => `<div class="ndx ${x.status === "resolved" ? "done" : ""}">
+      <div class="ndx-h"><b>${esc(x.label)}</b><span class="faint mono">${x.code}</span><span class="faint">${esc(x.en || "")}</span>${x.status === "resolved" ? `<span class="chip gray">해결 ${md(x.resolvedAt || "")}</span>` : '<span class="chip">진행 중</span>'}<span class="sp"></span>
+        <button class="btn ghost sm" onclick="openNursingForm('${x.id}')">수정</button>${x.status === "resolved" ? `<button class="btn ghost sm" onclick="nursingStatus('${x.id}','active')">다시 열기</button>` : `<button class="btn ghost sm" onclick="nursingStatus('${x.id}','resolved')">${ICON.check} 해결</button>`}<button class="btn ghost sm" style="color:var(--risk-high-text)" onclick="nursingDel('${x.id}')">${ICON.trash}</button></div>
+      <div class="kv" style="grid-template-columns:84px 1fr;margin-top:6px"><span class="k">관련 요인</span><span>${chips(x.related || [])}</span><span class="k">증상·징후</span><span>${chips(x.evidence || [])}</span>${x.goal ? `<span class="k">목표</span><span>${esc(x.goal)}</span>` : ""}${x.plan ? `<span class="k">중재 계획</span><span style="white-space:pre-wrap">${esc(x.plan)}</span>` : ""}</div>
+      <div class="hist">${x.date || ""} · ${esc(x.by || "")}${x.updatedAt ? " · 수정됨" : ""}</div></div>`;
+  return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:14px">
+    <div class="panel-h" style="margin:0"><div><span class="h2">간호진단 <span class="faint">NANDA-I 기준 · 상담자가 확정</span></span></div><button class="btn primary sm" onclick="openNursingForm()">${ICON.plus} 진단 추가</button></div>
+    ${sug.length ? `<div><div class="label" style="margin-bottom:6px">자동 제안 <span class="faint">자가진단 문항·하루일지·채팅에서 계산 · 눌러서 확정</span></div>
+      <div class="sugs">${sug.map(s => { const n = nanda(s.code); return `<button class="sug" onclick="openNursingForm(null,'${s.code}')"><b>${n.label}</b><small>${esc(s.why.join(" · "))}</small></button>`; }).join("")}</div></div>` : `<div class="faint">${d.diag.length ? "현재 자동 제안할 진단이 없습니다" : "자가진단 기록이 생기면 여기에 진단 후보가 제안됩니다"}</div>`}
+    <div><div class="label" style="margin-bottom:6px">확정된 진단 ${active.length}건</div>${active.map(card).join("") || `<div class="faint">아직 확정한 간호진단이 없습니다. 위 제안을 누르거나 "진단 추가"로 시작하세요.</div>`}</div>
+    ${done.length ? `<details><summary class="label" style="cursor:pointer">해결된 진단 ${done.length}건</summary><div style="margin-top:8px">${done.map(card).join("")}</div></details>` : ""}
+  </div>`;
+}
+function openNursingForm(id, code) {
+  const u = cur(); if (!u) return; const d = Object.assign(blankData(u.name), u.data || {});
+  const x = id ? (A.nursing[u.uid] || []).find(v => v.id === id) : null;
+  const sg = !x && code ? suggestNursing(u, d).find(s => s.code === code) : null;
+  const f = x || { code: code || NANDA[0].code, related: [], evidence: sg ? [...new Set(sg.ev)] : [], goal: "", plan: "", status: "active" };
+  const n = nanda(f.code) || NANDA[0];
+  const boxes = (name, cat, sel) => { const all = [...new Set([...cat, ...sel])]; return all.map(t => `<label class="chk"><input type="checkbox" name="${name}" value="${esc(t)}" ${sel.includes(t) ? "checked" : ""}> ${esc(t)}</label>`).join("") + `<input class="inp" style="margin-top:6px" placeholder="직접 입력 후 Enter (여러 개 가능)" onkeydown="if(event.key==='Enter'){event.preventDefault();const v=this.value.trim();if(v){this.insertAdjacentHTML('beforebegin','<label class=chk><input type=checkbox name=${name} checked value=\\''+v.replace(/'/g,'')+'\\'> '+v+'</label>');this.value=''}}">`; };
+  modal(`<h3>${x ? "간호진단 수정" : "간호진단 추가"} <span class="faint">· ${esc(u.name)} ${u.no}</span></h3>
+    <div><div class="label">진단명 (NANDA-I)</div><select id="n-code" class="inp" onchange="nursingPick(this.value)">${NANDA.map(v => `<option value="${v.code}" ${v.code === f.code ? "selected" : ""}>${v.label} · ${v.en} (${v.code})</option>`).join("")}</select></div>
+    ${sg && sg.why.length ? `<div class="advice m" style="margin-top:0"><b>제안 근거</b> · ${esc(sg.why.join(" · "))}</div>` : ""}
+    <div id="n-body"><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><div class="label">관련 요인 <span class="faint">r/t</span></div><div class="chks">${boxes("rel", n.rel, f.related || [])}</div></div>
+      <div><div class="label">증상·징후 <span class="faint">a.e.b.${n.def.length ? "" : " · 위험 진단은 위험 요인만"}</span></div><div class="chks">${boxes("ev", n.def, f.evidence || [])}</div></div></div></div>
+    <div><div class="label">목표 (기대 결과)</div><input id="n-goal" class="inp" value="${esc(f.goal)}" placeholder="4주 내 주 3회 이상 6시간 수면 유지"></div>
+    <div><div class="label">중재 계획</div><textarea id="n-plan" class="inp" placeholder="수면 위생 교육, 취침 전 안정화 음성 2번 권장, 다음 회차 수면 문항 재확인">${esc(f.plan)}</textarea></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn primary" onclick="saveNursing('${id || ""}')">저장</button></div>`);
+}
+function nursingPick(code) { const n = nanda(code); const u = cur(), d = Object.assign(blankData(u.name), u.data || {}), sg = suggestNursing(u, d).find(s => s.code === code);
+  const boxes = (name, cat, sel) => [...new Set([...cat, ...sel])].map(t => `<label class="chk"><input type="checkbox" name="${name}" value="${esc(t)}" ${sel.includes(t) ? "checked" : ""}> ${esc(t)}</label>`).join("") + `<input class="inp" style="margin-top:6px" placeholder="직접 입력 후 Enter" onkeydown="if(event.key==='Enter'){event.preventDefault();const v=this.value.trim();if(v){this.insertAdjacentHTML('beforebegin','<label class=chk><input type=checkbox name=${name} checked value=\\''+v.replace(/'/g,'')+'\\'> '+v+'</label>');this.value=''}}">`;
+  $("#n-body").innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div class="label">관련 요인 <span class="faint">r/t</span></div><div class="chks">${boxes("rel", n.rel, [])}</div></div><div><div class="label">증상·징후 <span class="faint">a.e.b.</span></div><div class="chks">${boxes("ev", n.def, sg ? [...new Set(sg.ev)] : [])}</div></div></div>`; }
+async function saveNursing(id) {
+  const u = cur(); const code = $("#n-code").value, n = nanda(code);
+  const pick = name => [...document.querySelectorAll(`.modal input[name=${name}]:checked`)].map(i => i.value);
+  const rec = { code, label: n.label, en: n.en, related: pick("rel"), evidence: pick("ev"), goal: $("#n-goal").value.trim(), plan: $("#n-plan").value.trim() };
+  try {
+    const ref = Cloud.db.collection("users").doc(u.uid).collection("nursing");
+    if (id) await ref.doc(id).set({ ...rec, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    else await ref.add({ ...rec, status: "active", date: todayStr(), by: A.email, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    closeModal(); toast("간호진단을 저장했습니다"); await loadDetail(u.uid);
+  } catch (e) { toast(Cloud.msg(e)); }
+}
+async function nursingStatus(id, status) { const u = cur(); try { await Cloud.db.collection("users").doc(u.uid).collection("nursing").doc(id).set({ status, resolvedAt: status === "resolved" ? todayStr() : null }, { merge: true }); toast(status === "resolved" ? "해결 처리했습니다" : "다시 열었습니다"); await loadDetail(u.uid); } catch (e) { toast(Cloud.msg(e)); } }
+async function nursingDel(id) { if (!confirm("이 간호진단을 삭제할까요?")) return; const u = cur(); try { await Cloud.db.collection("users").doc(u.uid).collection("nursing").doc(id).delete(); await loadDetail(u.uid); } catch (e) { toast(Cloud.msg(e)); } }
+
+/* ═══════════════ 객관적 정보 탭 ═══════════════
+   위: 앱에서 자동 수집된 지표 (자가진단 문항·하루일지·출석·근무·채팅)
+   아래: 상담자 측정 기록 users/{uid}/vitals/{id} = { date, sleepH, sleepQ, alcohol, caffeine, sbp, dbp, pulse, meds, obs, by } */
+const OBJ_ITEMS = [[2, "수면 지속 어려움"], [15, "잠들기 어려움"], [20, "사건 관련 꿈"], [10, "쉽게 놀람"], [21, "과경계"], [18, "집중 곤란"], [19, "신체 반응"], [4, "예민·분노"]];
+function objectiveTab(u, d) {
+  const t = todayStr(), dg = d.diag, last = dg[dg.length - 1], prev = dg[dg.length - 2];
+  const avg = arr => arr.length ? Math.round(arr.reduce((a, b) => a + b.score, 0) / arr.length) : null;
+  const dl7 = (d.daily || []).filter(x => x.date > addDays(t, -7)), dl14 = (d.daily || []).filter(x => x.date > addDays(t, -14) && x.date <= addDays(t, -7));
+  const a7 = avg(dl7), a14 = avg(dl14);
+  const appts = d.appts || [], done = appts.filter(a => a.status === "done" || (a.status === "booked" && a.date < t)).length, canc = appts.filter(a => a.status === "cancelled").length;
+  const chat7 = (d.chat || []).filter(m => m.role === "me").length;
+  const nights = nightCount(d, 30);
+  const tile = (l, v, s, hi) => `<div class="otile ${hi ? "hi" : ""}"><div class="label">${l}</div><div class="v mono">${v}</div><div class="faint">${s}</div></div>`;
+  const arrow = (a, b) => a == null || b == null ? "" : a > b ? `<span style="color:var(--risk-high-text)">↑${a - b}</span>` : a < b ? `<span style="color:var(--brand)">↓${b - a}</span>` : "→";
+  const vitals = A.vitals[u.uid] || [];
+  const sl = vitals.filter(v => v.sleepH != null).slice(0, 4), slAvg = sl.length ? (sl.reduce((a, v) => a + +v.sleepH, 0) / sl.length).toFixed(1) : null;
+  return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:16px">
+    <div><div class="label" style="margin-bottom:6px">앱에서 수집된 지표 <span class="faint">자동 · 내담자 입력 기반</span></div>
+      <div class="otiles">
+        ${tile("IES-R-K 최근 총점", last ? last.score : "—", last ? `${md(last.date)} · ${prev ? arrow(last.score, prev.score) + " 직전 " + prev.score : "첫 검사"}` : "기록 없음", last && last.score >= SET.t2)}
+        ${tile("하루일지 7일 평균", a7 != null ? a7 + "%" : "—", a7 != null ? `${dl7.length}일 작성 · ${a14 != null ? "전주 " + a14 + "% " + arrow(a7, a14) : "전주 기록 없음"}` : "최근 7일 기록 없음", a7 != null && a7 < 40)}
+        ${tile("상담 출석", `${done}<span class="muted sm">/${appts.length}</span>`, `완료 ${done} · 취소 ${canc} · 예정 ${appts.filter(a => a.status === "booked" && a.date >= t).length}`)}
+        ${tile("야간·당번 근무", nights + "<span class='muted sm'>회</span>", "최근 30일 근무표 기준", nights >= 10)}
+        ${tile("채팅 메시지", chat7 + "<span class='muted sm'>건</span>", "누적 · 내담자 발화만", false)}
+        ${tile("측정 수면시간", slAvg != null ? slAvg + "<span class='muted sm'>h</span>" : "—", slAvg != null ? `최근 ${sl.length}회 평균` : "아래 측정 기록에서 입력", slAvg != null && slAvg < 6)}
+      </div></div>
+    ${last && last.answers && last.answers.length >= 22 ? `<div><div class="label" style="margin-bottom:6px">수면·각성 관련 문항 <span class="faint">0~4점 · 3점 이상 강조</span></div>
+      <table class="tbl"><tr><th>문항</th><th>내용</th><th>최근</th><th>직전</th><th>변화</th></tr>${OBJ_ITEMS.map(([i, l]) => { const a = itemScore(last, i), b = itemScore(prev, i); return `<tr><td class="mono">${i}</td><td>${l}</td><td class="mono ${a >= 3 ? "hi" : ""}">${a}</td><td class="mono">${b ?? "—"}</td><td>${arrow(a, b)}</td></tr>`; }).join("")}</table></div>` : ""}
+    ${dg.length ? `<div><div class="label" style="margin-bottom:6px">자가진단 이력 <span class="faint">최근 8회</span></div>
+      <table class="tbl"><tr><th>날짜</th><th>총점</th><th>침입</th><th>회피</th><th>과각성</th><th>판정</th></tr>${dg.slice(-8).reverse().map(x => { const s = subscales(x.answers); return `<tr><td class="mono">${x.date.replace(/-/g, ".")}</td><td class="mono"><b>${x.score}</b></td><td class="mono">${s ? s.intrusion : "—"}</td><td class="mono">${s ? s.avoidance : "—"}</td><td class="mono">${s ? s.hyper : "—"}</td><td>${badge(x.score)}</td></tr>`; }).join("")}</table></div>` : ""}
+    <div><div class="panel-h" style="margin-bottom:6px"><span class="label">상담자 측정 기록 <span class="faint">${ICON.lock} 상담자만 열람</span></span><button class="btn primary sm" onclick="openVitalForm()">${ICON.plus} 측정 기록</button></div>
+      ${vitals.length ? `<table class="tbl"><tr><th>날짜</th><th>수면</th><th>수면질</th><th>음주</th><th>카페인</th><th>혈압</th><th>맥박</th><th>복약</th><th>관찰</th><th></th></tr>${vitals.map(v => `<tr><td class="mono">${(v.date || "").slice(2).replace(/-/g, ".")}</td><td class="mono ${v.sleepH != null && v.sleepH < 6 ? "hi" : ""}">${v.sleepH ?? "—"}h</td><td class="mono">${v.sleepQ ? v.sleepQ + "/5" : "—"}</td><td class="mono ${v.alcohol >= 3 ? "hi" : ""}">${v.alcohol ?? "—"}</td><td class="mono">${v.caffeine ?? "—"}</td><td class="mono ${v.sbp >= 140 || v.dbp >= 90 ? "hi" : ""}">${v.sbp || "—"}/${v.dbp || "—"}</td><td class="mono">${v.pulse || "—"}</td><td>${esc(v.meds || "—")}</td><td style="white-space:pre-wrap;max-width:220px">${esc(v.obs || "")}</td><td><button class="btn ghost sm" onclick="vitalDel('${v.id}')">${ICON.trash}</button></td></tr>`).join("")}</table>`
+        : `<div class="faint">아직 측정 기록이 없습니다. 상담 중 확인한 수면·음주·혈압 등을 남기면 추이로 볼 수 있습니다.</div>`}</div>
+  </div>`;
+}
+function openVitalForm() {
+  const u = cur(); if (!u) return;
+  const num = (id, l, ph, step) => `<div><div class="label">${l}</div><input id="${id}" class="inp" type="number" step="${step || 1}" placeholder="${ph}"></div>`;
+  modal(`<h3>측정 기록 <span class="faint">· ${esc(u.name)} ${u.no}</span></h3>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div><div class="label">날짜</div><input id="v-date" class="inp" type="date" value="${todayStr()}"></div>
+      ${num("v-sleepH", "수면 시간(h)", "6.5", .5)}
+      <div><div class="label">수면의 질</div><select id="v-sleepQ" class="inp"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}">${n} ${["매우 나쁨", "나쁨", "보통", "좋음", "매우 좋음"][n - 1]}</option>`).join("")}</select></div>
+      ${num("v-alcohol", "음주(회/주)", "0")}
+      ${num("v-caffeine", "카페인(잔/일)", "2")}
+      ${num("v-sbp", "수축기 혈압", "120")}${num("v-dbp", "이완기 혈압", "80")}${num("v-pulse", "맥박", "72")}</div>
+    <div><div class="label">복약</div><input id="v-meds" class="inp" placeholder="졸피뎀 10mg 취침 전 / 없음"></div>
+    <div><div class="label">관찰 소견 <span class="faint">외모·행동·정서 등</span></div><textarea id="v-obs" class="inp" placeholder="눈 밑 다크서클, 말 느리고 시선 회피, 손 떨림 없음"></textarea></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn primary" onclick="saveVital()">저장</button></div>`);
+}
+async function saveVital() {
+  const u = cur(); const n = id => { const v = $(id).value; return v === "" ? null : +v; };
+  const rec = { date: $("#v-date").value, sleepH: n("#v-sleepH"), sleepQ: n("#v-sleepQ"), alcohol: n("#v-alcohol"), caffeine: n("#v-caffeine"), sbp: n("#v-sbp"), dbp: n("#v-dbp"), pulse: n("#v-pulse"), meds: $("#v-meds").value.trim(), obs: $("#v-obs").value.trim(), by: A.email };
+  if (!rec.date) return toast("날짜를 입력해 주세요");
+  if (Object.values(rec).every(v => v == null || v === "" || v === rec.date || v === A.email)) return toast("측정값을 하나 이상 입력해 주세요");
+  try { await Cloud.db.collection("users").doc(u.uid).collection("vitals").add({ ...rec, createdAt: firebase.firestore.FieldValue.serverTimestamp() }); closeModal(); toast("측정 기록을 저장했습니다"); await loadDetail(u.uid); } catch (e) { toast(Cloud.msg(e)); }
+}
+async function vitalDel(id) { if (!confirm("이 측정 기록을 삭제할까요?")) return; const u = cur(); try { await Cloud.db.collection("users").doc(u.uid).collection("vitals").doc(id).delete(); await loadDetail(u.uid); } catch (e) { toast(Cloud.msg(e)); } }
+
+/* ═══════════════ 콘텐츠 관리 ═══════════════
+   content/app 한 문서. 내담자 앱은 로그인 후 읽어 data.js 기본값을 덮어쓴다 (빈 목록이면 기본값 유지). */
+const CSEC = {
+  videos: { label: "안정화 영상", cols: [["id", "유튜브 ID", "0akeNdOuwLE"], ["title", "제목", "안정화 영상 1"], ["desc", "설명", "순서대로 따라 보세요"]], hint: "유튜브 주소의 v= 뒤 11자리를 넣습니다. 앱에는 순서대로 번호가 붙습니다." },
+  hospitals: { label: "연계 병원", cols: [["name", "병원명", "○○ 병원"], ["addr", "주소", "충북 청주시 …"], ["tel", "전화", "043-000-0000"]], hint: "앱 정보 → 치료연계에 그대로 표시됩니다." },
+  helplines: { label: "긴급 상담 전화", cols: [["name", "이름", "정신건강 위기상담전화"], ["tel", "번호", "1577-0199"], ["desc", "설명", "24시간"]], hint: "치료연계 화면 맨 위 빨간 칸에 표시됩니다." },
+  counselors: { label: "상담사", cols: [["id", "ID (변경 금지)", "kang"], ["name", "이름", "강○○"], ["title", "직함", "선생님"], ["phone", "연락처", "043-000-0000"], ["spec", "전문 분야", "외상 후 스트레스"], ["career", "경력", "임상심리전문가"], ["intro", "소개", "…"]], hint: "ID는 예약 기록과 연결되므로 기존 상담사의 ID는 바꾸지 마세요. 새 상담사는 영문 ID를 새로 정합니다." },
+  notice: { label: "앱 공지" }
+};
+function normContent(c) { const o = JSON.parse(JSON.stringify(DEF_CONTENT)); if (!c) return o; for (const k of ["videos", "hospitals", "helplines", "counselors"]) if (Array.isArray(c[k])) o[k] = c[k].map(x => ({ ...x })); if (c.notice) o.notice = { on: !!c.notice.on, text: c.notice.text || "" }; return o; }
+function contentView() {
+  if (!A.content) A.content = normContent(null);
+  const k = A.ctab, c = A.content, sec = CSEC[k];
+  let body;
+  if (k === "notice") body = `<label class="sm" style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${c.notice.on ? "checked" : ""} onchange="A.content.notice.on=this.checked"> 앱 홈 화면에 공지 표시</label>
+    <textarea class="inp" style="min-height:120px;margin-top:8px" placeholder="예) 10월 셋째 주 상담은 센터 사정으로 화상만 진행합니다." oninput="A.content.notice.text=this.value">${esc(c.notice.text)}</textarea>
+    <div class="faint" style="margin-top:6px">내담자 앱 홈 화면 맨 위 카드에 표시됩니다. 끄면 사라집니다.</div>`;
+  else {
+    const rows = c[k];
+    body = `<div class="faint" style="margin-bottom:8px">${sec.hint}</div>
+      <table class="tbl edit"><tr><th style="width:28px">#</th>${sec.cols.map(([, l]) => `<th>${l}</th>`).join("")}<th style="width:70px"></th></tr>
+      ${rows.map((r, i) => `<tr><td class="mono">${i + 1}</td>${sec.cols.map(([f, , ph]) => `<td>${f === "intro" || f === "desc" ? `<textarea class="inp" rows="2" placeholder="${esc(ph)}" oninput="A.content.${k}[${i}].${f}=this.value">${esc(r[f] || "")}</textarea>` : `<input class="inp" placeholder="${esc(ph)}" value="${esc(r[f] || "")}" oninput="A.content.${k}[${i}].${f}=this.value">`}</td>`).join("")}
+        <td style="white-space:nowrap"><button class="btn ghost sm" title="위로" ${i === 0 ? "disabled" : ""} onclick="contentMove('${k}',${i},-1)">↑</button><button class="btn ghost sm" title="아래로" ${i === rows.length - 1 ? "disabled" : ""} onclick="contentMove('${k}',${i},1)">↓</button><button class="btn ghost sm" style="color:var(--risk-high-text)" onclick="contentDel('${k}',${i})">${ICON.trash}</button></td></tr>`).join("")}</table>
+      ${!rows.length ? `<div class="faint" style="padding:8px 0">목록이 비어 있으면 앱은 기본값(data.js)을 보여줍니다.</div>` : ""}
+      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn outline sm" onclick="contentAdd('${k}')">${ICON.plus} 행 추가</button><button class="btn ghost sm" onclick="contentReset('${k}')">기본값으로 되돌리기</button></div>`;
+  }
+  return `<div class="center"><div class="panel-h" style="margin:0"><div><span class="h2" style="font-size:18px">콘텐츠 관리</span> <span class="faint">내담자 앱의 영상·병원·전화·상담사·공지를 여기서 바꿉니다</span></div><button class="btn primary" onclick="saveContentAll()">${ICON.check} 앱에 저장</button></div>
+    <div class="panel"><div class="tabs" style="margin:0 0 12px">${Object.entries(CSEC).map(([key, s]) => `<button class="${A.ctab === key ? "on" : ""}" onclick="A.ctab='${key}';render()">${s.label}${key !== "notice" ? ` <span class="faint">${c[key].length}</span>` : c.notice.on ? ' <span class="chip">켜짐</span>' : ""}</button>`).join("")}</div>${body}</div>
+    <div class="faint">저장하면 내담자가 다음에 앱을 열 때(로그인 상태 포함) 바로 반영됩니다. 사진·로고 파일 교체는 앱 재빌드가 필요합니다.</div></div>`;
+}
+function contentAdd(k) { const o = {}; CSEC[k].cols.forEach(([f]) => o[f] = ""); if (k === "counselors") o.id = "c" + Date.now().toString(36).slice(-4); A.content[k].push(o); render(); }
+function contentDel(k, i) { A.content[k].splice(i, 1); render(); }
+function contentMove(k, i, dir) { const a = A.content[k], j = i + dir; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; render(); }
+function contentReset(k) { if (!confirm(`${CSEC[k].label} 목록을 기본값으로 되돌릴까요? (저장 전까지는 앱에 반영되지 않습니다)`)) return; A.content[k] = JSON.parse(JSON.stringify(DEF_CONTENT[k])); render(); }
+async function saveContentAll() {
+  const c = normContent(A.content);
+  for (const k of ["videos", "hospitals", "helplines", "counselors"]) c[k] = c[k].filter(r => Object.values(r).some(v => String(v || "").trim()));
+  const bad = c.videos.find(v => !/^[\w-]{11}$/.test((v.id || "").trim())); if (bad) return toast(`영상 ID 형식 확인: "${bad.id}" (11자리)`);
+  if (c.counselors.some(x => !x.id || !x.name)) return toast("상담사는 ID와 이름이 필요합니다");
+  const ids = c.counselors.map(x => x.id); if (new Set(ids).size !== ids.length) return toast("상담사 ID가 중복됩니다");
+  try { await Cloud.saveContent(c, A.email); Cloud.applyContent(c); A.content = normContent(c); toast("앱에 저장했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
 }
 
 /* ── 시작 ── */

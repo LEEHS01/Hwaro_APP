@@ -87,6 +87,21 @@ const Cloud = {
     const b = this.db.batch(); col.docs.forEach(d => b.delete(d.ref)); b.delete(this.db.collection("users").doc(uid)); await b.commit();
   },
 
+  /* ── 콘텐츠 (관리자가 수정하는 영상·병원·긴급전화·상담사·공지) content/app ── */
+  async loadContent() { try { const s = await this.db.collection("content").doc("app").get(); return s.exists ? s.data() : null; } catch (e) { console.warn("콘텐츠 불러오기 실패", e); return null; } },
+  async saveContent(c, by) { await this.db.collection("content").doc("app").set({ ...c, by: by || "", updatedAt: firebase.firestore.FieldValue.serverTimestamp() }); },
+  // data.js의 상수 배열을 제자리에서 교체 (const라서 splice 사용). 비어 있는 항목은 기본값 유지
+  applyContent(c) {
+    if (!c) return;
+    const rep = (arr, v) => { if (Array.isArray(v) && v.length) arr.splice(0, arr.length, ...v.map(x => ({ ...x }))); };
+    rep(VIDEO_LIST, c.videos); rep(HOSPITALS, c.hospitals); rep(HELPLINES, c.helplines);
+    if (Array.isArray(c.counselors) && c.counselors.length) {
+      const colors = ["#c98a72", "#b0876f", "#d4a08c", "#a46a55", "#9c7b6a", "#c4a08a"];
+      rep(COUNSELORS, c.counselors.map((x, i) => ({ ...x, color: x.color || colors[i % colors.length] })));
+    }
+    window.APP_NOTICE = c.notice && c.notice.on && (c.notice.text || "").trim() ? c.notice : null;
+  },
+
   /* 오류 메시지 한글화 */
   msg(e) {
     const c = (e && e.code) || (e && e.message) || "";

@@ -207,3 +207,27 @@ textarea.inp { resize: vertical; min-height: 60px; }
 .bell { position: relative; width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r-md); color: var(--ink-muted); }
 .bell:hover { background: var(--surface-300); }
 .bell .badge { position: absolute; top: 2px; right: 2px; background: var(--risk-high); color: var(--on-risk-high); font-size: 10px; line-height: 14px; min-width: 14px; border-radius: 999px; text-align: center; padding: 0 3px; font-weight: 700; }
+
+/* ── 간호진단 / 객관적 정보 / 콘텐츠 관리 ── */
+.sugs { display: flex; flex-wrap: wrap; gap: 8px; }
+.sug { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 1px dashed var(--border-control); border-radius: var(--r-md); padding: 8px 12px; text-align: left; max-width: 300px; }
+.sug:hover { background: var(--brand-tint); border-color: var(--brand); }
+.sug b { font-size: 13px; } .sug small { font-size: 11px; line-height: 16px; color: var(--ink-muted); }
+.ndx { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; margin-bottom: 8px; }
+.ndx.done { opacity: .7; }
+.ndx-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.ndx-h .sp { flex: 1; }
+.chks { display: flex; flex-direction: column; gap: 2px; }
+.chk { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; line-height: 20px; cursor: pointer; }
+.chk input { margin-top: 4px; }
+.otiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.otile { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }
+.otile.hi { background: var(--risk-high-tint); border-color: transparent; }
+.otile .v { font-size: 24px; line-height: 30px; font-weight: 600; margin: 2px 0; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 20px; }
+.tbl th { text-align: left; font-size: 12px; font-weight: 600; color: var(--ink-muted); padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 5px 8px; border-bottom: 1px solid var(--chart-grid); vertical-align: top; }
+.tbl td.hi { color: var(--risk-high-text); font-weight: 700; }
+.tbl.edit td { padding: 4px; } .tbl.edit .inp { padding: 4px 8px; font-size: 13px; }
+.tbl.edit textarea.inp { min-height: 0; }
+@media (max-width: 800px) { .otiles { grid-template-columns: 1fr 1fr; } }
