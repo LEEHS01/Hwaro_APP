@@ -352,7 +352,7 @@ async function saveSoap(id) {
     const ref = Cloud.db.collection("users").doc(u.uid).collection("results");
     if (id) { const old = (A.results[u.uid] || []).find(x => x.id === id); const history = [...(old.history || []), { at: new Date().toISOString(), by: A.email, prev: { s: old.s, o: old.o, a: old.a, p: old.p, text: old.text, topic: old.topic } }]; await ref.doc(id).set({ ...rec, history, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }); }
     else { const no = (A.results[u.uid] || []).length + 1; await ref.add({ ...rec, no, createdAt: firebase.firestore.FieldValue.serverTimestamp(), by: A.email }); }
-    closeModal(); toast("저장되었습니다 · 공개용 코멘트가 앱에 전달됩니다"); A.tab = "comments"; await loadDetail(u.uid);
+    closeModal(); toast("저장되었습니다 · 공개용 코멘트가 앱에 전달됩니다"); A.tab = "comments"; if (rec.text) Cloud.notify(u.uid, "상담 결과가 등록되었습니다", "상담자 코멘트를 앱 '상담결과'에서 확인하세요.", { to: "results" }); await loadDetail(u.uid);
   } catch (e) { toast(Cloud.msg(e)); }
 }
 
@@ -396,10 +396,10 @@ function openChange(uid, apptId) {
 }
 async function saveChange(uid, apptId) {
   const date = $("#c-date").value, time = $("#c-time").value; if (!date) return toast("날짜를 선택해 주세요");
-  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", date, time, by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed", date, time }; closeModal(); toast("예약을 변경했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
+  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", date, time, by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed", date, time }; closeModal(); toast("예약을 변경했습니다"); render(); Cloud.notify(uid, "예약 일시가 변경되었습니다", `${date.replace(/-/g, ".")} ${fmtT(time)} 으로 변경 · 앱 예약 목록에서 확인하세요`, { to: "bookingList" }); } catch (e) { toast(Cloud.msg(e)); }
 }
 async function cancelAppt(uid, apptId) {
-  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "cancelled", by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "cancelled" }; closeModal(); toast("예약을 취소 처리했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
+  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "cancelled", by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "cancelled" }; closeModal(); toast("예약을 취소 처리했습니다"); render(); Cloud.notify(uid, "예약이 취소되었습니다", "상담자 사정으로 예약이 취소되었습니다. 앱에서 다시 예약해 주세요.", { to: "booking" }); } catch (e) { toast(Cloud.msg(e)); }
 }
 /* 상담 가능 시간 (admins/{email} 문서에 저장) */
 const availKey = () => SET.cid || "_all";
@@ -427,7 +427,7 @@ function showNotis() {
     ${pend.map(a => `<div class="srow" style="grid-template-columns:1fr"><div><span class="chip gray">승인 대기</span> <b>${esc(a.name)}</b> · ${a.date.replace(/-/g, ".")} ${fmtT(a.time)} · ${a.type} <button class="btn primary sm" onclick="approve('${a.uid}','${a.id}');closeModal()">승인</button></div></div>`).join("")}
     ${!risky.length && !pend.length ? `<div class="empty">새 알림이 없습니다</div>` : ""}`);
 }
-async function approve(uid, apptId) { try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", by: A.email, at: new Date().toISOString() }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed" }; toast("승인했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
+async function approve(uid, apptId) { try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", by: A.email, at: new Date().toISOString() }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed" }; toast("승인했습니다"); render(); const ua = (A.users || []).find(x => x.uid === uid), aa = (ua?.data?.appts || []).find(x => x.id === apptId); if (aa) Cloud.notify(uid, "예약이 승인되었습니다", `${aa.date.replace(/-/g, ".")} ${fmtT(aa.time)} · ${aa.type} 상담`, { to: "bookingList" }); } catch (e) { toast(Cloud.msg(e)); } }
 function apptLine(a) { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}${a.changed ? ' <span class="chip gray">변경됨</span>' : ""}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${a.date === todayStr() && a.type === "화상" ? `<button class="btn primary sm" onclick="openCall('${a.uid}','${a.id}')">${ICON.play} 상담 시작</button>` : ""}<button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }
 function schedMove(n) { const d = A.schedDate || todayStr(); A.schedDate = A.schedMode === "day" ? addDays(d, n) : A.schedMode === "week" ? addDays(d, 7 * n) : ymd(new Date(parse(d).getFullYear(), parse(d).getMonth() + n, 1)); render(); }
 function scheduleView() {
@@ -529,7 +529,7 @@ async function sendReply(uid) {
   const d = new Date(), ts = `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad(d.getMinutes())}`;
   try {
     await Cloud.db.collection("users").doc(uid).collection("inbox").add({ text, from, by: A.email, ts, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-    ta.value = ""; await loadDetail(uid); const u = (A.users || []).find(x => x.uid === uid); const l = $("#adm-chat"); if (l) { l.innerHTML = chatLogHtml(u); l.scrollTop = l.scrollHeight; }
+    ta.value = ""; Cloud.notify(uid, `${from} 답장`, text.length > 80 ? text.slice(0, 80) + "…" : text, { to: "chat" }); await loadDetail(uid); const u = (A.users || []).find(x => x.uid === uid); const l = $("#adm-chat"); if (l) { l.innerHTML = chatLogHtml(u); l.scrollTop = l.scrollHeight; }
   } catch (e) { toast(Cloud.msg(e)); }
 }
 

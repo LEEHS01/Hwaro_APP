@@ -49,7 +49,7 @@ function registerUser(name, unit, birth, data) {
   U.list.push(u); saveUsers(); saveData(id, data || blankData(name)); return u;
 }
 function loginAs(id) { curId = id; lsSet(CUR_KEY, id); S = loadData(id) || blankData(userById(id)?.name || ""); if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; }
-function logout() { curId = null; S = null; P = null; try { localStorage.removeItem(CUR_KEY); } catch (e) { } if (Cloud.on) Cloud.logout().catch(() => { }); }
+function logout() { if (Cloud.on && curId && pushToken) { try { Cloud.db.collection("users").doc(curId).set({ fcmTokens: firebase.firestore.FieldValue.arrayRemove(pushToken) }, { merge: true }); } catch (e) { } pushToken = null; } curId = null; S = null; P = null; try { localStorage.removeItem(CUR_KEY); } catch (e) { } if (Cloud.on) Cloud.logout().catch(() => { }); }
 // 클라우드 모드: 로그인된 내담자의 프로필·데이터를 불러와 세션 시작
 async function enterCloudUser(uid) {
   const doc = await Cloud.loadUser(uid);
@@ -72,6 +72,7 @@ async function enterCloudUser(uid) {
     if (!added) return; save();
     if (current && current.name === "chat") { render(); } else toast("상담자 답장이 도착했습니다 · 채팅상담에서 확인");
   }, e => console.warn(e));
+  setupPush(uid);
   Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
   // 상담사의 예약 승인·변경·취소 반영
   Cloud.db.collection("users").doc(uid).collection("approvals").onSnapshot(q => {
@@ -82,6 +83,21 @@ async function enterCloudUser(uid) {
       if (ap.status === "confirmed" && !a.confirmed) { a.confirmed = true; changed = true; } });
     if (changed) { save(); if (current && ["home", "care", "bookingList", "connect"].includes(current.name)) render(); toast("상담사가 예약을 확인·변경했습니다"); }
   }, e => console.warn(e));
+}
+/* ── 푸시 알림 등록 (안드로이드 APK에서만, @capacitor/push-notifications). 토큰은 users/{uid}.fcmTokens 에 저장 ── */
+let pushToken = null;
+async function setupPush(uid) {
+  const C = window.Capacitor, PN = C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.PushNotifications; if (!PN) return;
+  try {
+    let perm = await PN.checkPermissions(); if (perm.receive !== "granted") perm = await PN.requestPermissions(); if (perm.receive !== "granted") return;
+    await PN.removeAllListeners();
+    PN.addListener("registration", t => { pushToken = t.value; Cloud.db.collection("users").doc(uid).set({ fcmTokens: firebase.firestore.FieldValue.arrayUnion(t.value) }, { merge: true }).catch(e => console.warn("토큰 저장 실패", e)); });
+    PN.addListener("registrationError", e => console.warn("푸시 등록 실패", e));
+    PN.addListener("pushNotificationReceived", nt => toast((nt.title ? nt.title + " · " : "") + (nt.body || "")));
+    PN.addListener("pushNotificationActionPerformed", a => { const to = a.notification && a.notification.data && a.notification.data.to; if (to && VIEWS[to] && S) go(to); });
+    try { await PN.createChannel({ id: "hwaro", name: "HWARO 상담 알림", description: "예약 승인·변경, 상담자 답장, 상담 결과", importance: 4, visibility: 1, sound: "default" }); } catch (e) { }
+    await PN.register();
+  } catch (e) { console.warn("push", e); }
 }
 const cloudBusy = msg => { const r = $("#modal-root"); r.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(msg)}</h3><div class="typing" style="justify-content:center;display:flex"><i></i><i></i><i></i></div></div></div>`; };
 // 1차 버전 데이터가 있으면 '홍길동 (샘플)' 계정으로 이전, 없으면 샘플 계정 생성 (로컬 모드 전용)
