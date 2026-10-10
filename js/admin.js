@@ -764,7 +764,7 @@ function loadJitsiApi() { return new Promise((ok, fail) => { if (window.JitsiMee
 async function openCall(uid, apptId) {
   const u = (A.users || []).find(x => x.uid === uid), a = (u?.data?.appts || []).find(x => x.id === apptId); if (!u || !a) return;
   const room = callRoomOf(u, a), url = "https://meet.jit.si/" + room, name = SET.cid ? `${counselor(SET.cid).name} ${counselor(SET.cid).title}` : SET.name || "상담자";
-  modal(`<div class="panel-h" style="margin:0"><h3>화상 상담 · ${esc(u.name)} <span class="faint">${u.no} · ${fmtT(a.time)} · ${(A.results[uid] || []).length + 1}회차</span></h3>
+  modal(`<div class="panel-h" style="margin:0"><h3>화상 상담 · ${esc(u.name)} <span class="faint">${u.no} · ${fmtT(a.time)} · ${(A.results[uid] || []).length + 1}회차</span> <span id="call-status" class="chip gray">입장 중</span></h3>
       <div style="display:flex;gap:6px"><a class="btn outline sm" href="${url}" target="_blank" rel="noopener">새 창에서 열기</a><button class="btn outline sm" onclick="closeCall();selectUser('${uid}');A.tab='comments';openSoapForm()">회차 기록 작성</button><button class="btn primary sm" onclick="closeCall()">종료</button></div></div>
     <div class="jitsi-box" id="adm-jitsi"><div class="empty" style="color:#ccc">화상 방에 입장하는 중…</div></div>
     <div class="faint">내담자가 앱에서 "상담시작"을 누르면 같은 방에 들어옵니다. 처음 입장 시 Jitsi가 진행자 로그인(구글 계정 등)을 요구하면 상담자가 한 번 로그인하면 됩니다. 방 이름: <span class="mono">${room}</span></div>`);
@@ -772,9 +772,13 @@ async function openCall(uid, apptId) {
   try {
     await loadJitsiApi(); const box = $("#adm-jitsi"); box.innerHTML = "";
     jitsiApi = new JitsiMeetExternalAPI("meet.jit.si", { roomName: room, parentNode: box, width: "100%", height: "100%", lang: "ko", userInfo: { displayName: name },
-      configOverwrite: { prejoinConfig: { enabled: false }, subject: `HWARO 상담 · ${u.name}`, startWithAudioMuted: false, startWithVideoMuted: false },
+      configOverwrite: { prejoinConfig: { enabled: false }, subject: `HWARO 상담 · ${u.name}`, startWithAudioMuted: false, startWithVideoMuted: false, toolbarButtons: ["microphone", "camera", "desktop", "tileview", "settings", "fullscreen"] },
       interfaceConfigOverwrite: { SHOW_JITSI_WATERMARK: false, SHOW_BRAND_WATERMARK: false, MOBILE_APP_PROMO: false } });
     jitsiApi.addListener("readyToClose", closeCall);
+    const st = (t, cls) => { const el = $("#call-status"); if (el) { el.textContent = t; el.className = "chip " + cls; } };
+    jitsiApi.addListener("videoConferenceJoined", () => st(jitsiApi.getNumberOfParticipants() > 1 ? "내담자 연결됨" : "내담자 기다리는 중", jitsiApi.getNumberOfParticipants() > 1 ? "" : "gray"));
+    jitsiApi.addListener("participantJoined", e => { st(`${e.displayName || "내담자"} 입장`, ""); toast(`${e.displayName || "내담자"}님이 입장했습니다`); });
+    jitsiApi.addListener("participantLeft", () => { st("내담자가 나갔습니다", "gray"); toast("내담자가 나갔습니다"); });
   } catch (e) { const box = $("#adm-jitsi"); if (box) box.innerHTML = `<div class="empty" style="color:#ccc">화상 화면을 불러오지 못했습니다. "새 창에서 열기"를 눌러 주세요.</div>`; }
 }
 function closeCall() { if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; } closeModal(); }

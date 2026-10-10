@@ -1039,12 +1039,17 @@ VIEWS.call = ({ id }) => {
         const box = $("#jitsi-box"); if (!box) return;
         jitsiApi = new JitsiMeetExternalAPI("meet.jit.si", { roomName: room, parentNode: box, width: "100%", height: "100%", lang: "ko",
           userInfo: { displayName: S.user.name + " (내담자)" },
-          configOverwrite: { prejoinConfig: { enabled: false }, disableDeepLinking: true, startWithAudioMuted: false, startWithVideoMuted: false, subject: "HWARO 화상 상담", toolbarButtons: ["microphone", "camera", "hangup", "tileview", "chat", "settings", "fullscreen"] },
+          configOverwrite: { prejoinConfig: { enabled: false }, disableDeepLinking: true, startWithAudioMuted: false, startWithVideoMuted: false, subject: "HWARO 화상 상담", toolbarButtons: ["microphone", "camera", "tileview", "settings", "fullscreen"], notifications: [] },
           interfaceConfigOverwrite: { MOBILE_APP_PROMO: false, SHOW_JITSI_WATERMARK: false, SHOW_BRAND_WATERMARK: false, DEFAULT_BACKGROUND: "#1b1b1b" } });
         const w = $("#call-wait"); if (w) w.remove();
         const tm = $("#call-timer"); if (tm) tm.style.zIndex = 2;
         jitsiApi.addListener("videoConferenceLeft", () => endCall(id));
         jitsiApi.addListener("readyToClose", () => endCall(id));
+        // 상담자 입장·퇴장 표시 (화면 위 띠 + 토스트)
+        const banner = (t, color) => { let b = $("#call-banner"); if (!b) { b = document.createElement("div"); b.id = "call-banner"; b.className = "call-banner"; box.appendChild(b); } b.textContent = t; b.style.background = color; b.style.display = "block"; clearTimeout(b._t); b._t = setTimeout(() => { b.style.display = "none"; }, 4000); };
+        jitsiApi.addListener("participantJoined", e => { banner(`${e.displayName || "상담자"} 입장 · 상담을 시작합니다`, "#1f5f5b"); toast("상담자가 입장했습니다"); });
+        jitsiApi.addListener("participantLeft", () => { banner("상담자가 나갔습니다 · 잠시 기다리거나 종료하세요", "#a32020"); toast("상담자가 나갔습니다"); });
+        jitsiApi.addListener("videoConferenceJoined", () => { if (jitsiApi.getNumberOfParticipants() <= 1) banner("상담자를 기다리는 중…", "rgba(0,0,0,.55)"); });
       } catch (e) {
         const w = $("#call-wait"); if (w) w.innerHTML = `<div style="font-size:16px;line-height:1.6">화상 화면을 불러오지 못했습니다.<br><span style="opacity:.7;font-size:13px">인터넷 연결을 확인하거나, 아래 왼쪽 버튼으로 브라우저에서 여세요.</span></div>`;
       }
