@@ -759,10 +759,11 @@ async function saveContentAll() {
 
 /* ── 화상 상담 (Jitsi Meet, meet.jit.si) — 내담자 앱과 같은 방 이름 "hwaro-{등록번호}-{예약ID}" ── */
 const callRoomOf = (u, a) => "hwaro-" + String(u.no || "").replace(/[^A-Za-z0-9]/g, "") + "-" + String(a.id).replace(/[^A-Za-z0-9]/g, "");
-let jitsiApi = null;
+let jitsiApi = null, curCall = null;
 function loadJitsiApi() { return new Promise((ok, fail) => { if (window.JitsiMeetExternalAPI) return ok(); const s = document.createElement("script"); s.src = "https://meet.jit.si/external_api.js"; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); }
 async function openCall(uid, apptId) {
   const u = (A.users || []).find(x => x.uid === uid), a = (u?.data?.appts || []).find(x => x.id === apptId); if (!u || !a) return;
+  curCall = { uid, apptId };
   const room = callRoomOf(u, a), url = "https://meet.jit.si/" + room, name = SET.cid ? `${counselor(SET.cid).name} ${counselor(SET.cid).title}` : SET.name || "상담자";
   modal(`<div class="panel-h" style="margin:0"><h3>화상 상담 · ${esc(u.name)} <span class="faint">${u.no} · ${fmtT(a.time)} · ${(A.results[uid] || []).length + 1}회차</span> <span id="call-status" class="chip gray">입장 중</span></h3>
       <div style="display:flex;gap:6px"><a class="btn outline sm" href="${url}" target="_blank" rel="noopener">새 창에서 열기</a><button class="btn outline sm" onclick="closeCall();selectUser('${uid}');A.tab='comments';openSoapForm()">회차 기록 작성</button><button class="btn primary sm" onclick="closeCall()">종료</button></div></div>
@@ -781,7 +782,12 @@ async function openCall(uid, apptId) {
     jitsiApi.addListener("participantLeft", () => { st("내담자가 나갔습니다", "gray"); toast("내담자가 나갔습니다"); });
   } catch (e) { const box = $("#adm-jitsi"); if (box) box.innerHTML = `<div class="empty" style="color:#ccc">화상 화면을 불러오지 못했습니다. "새 창에서 열기"를 눌러 주세요.</div>`; }
 }
-function closeCall() { if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; } closeModal(); }
+// 상담자가 종료하면 approvals/{apptId}.callEnded 에 시각을 기록 → 내담자 앱이 읽고 자동으로 통화를 끝냄
+function closeCall() {
+  if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; }
+  if (curCall) { const { uid, apptId } = curCall; curCall = null; Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ callEnded: new Date().toISOString(), by: A.email }, { merge: true }).then(() => toast("상담을 종료했습니다 · 내담자 앱도 종료됩니다")).catch(e => toast(Cloud.msg(e))); }
+  closeModal();
+}
 
 /* ── 종결 처리: users/{uid}.status = "closed" (내담자 앱 데이터는 그대로, 목록·통계에서 "종결"로 분류) ── */
 function openClose(uid) {

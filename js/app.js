@@ -80,7 +80,9 @@ async function enterCloudUser(uid) {
     q.docs.forEach(doc => { const ap = doc.data(), a = S.appts.find(x => x.id === doc.id); if (!a) return;
       if (ap.status === "cancelled" && a.status !== "cancelled") { a.status = "cancelled"; changed = true; }
       if (ap.date && (a.date !== ap.date || (ap.time && a.time !== ap.time))) { a.date = ap.date; if (ap.time) a.time = ap.time; a.changedBy = "counselor"; changed = true; }
-      if (ap.status === "confirmed" && !a.confirmed) { a.confirmed = true; changed = true; } });
+      if (ap.status === "confirmed" && !a.confirmed) { a.confirmed = true; changed = true; }
+      // 상담자가 화상 상담을 종료함 → 통화 중이면 자동 종료
+      if (ap.callEnded && a.callEnded !== ap.callEnded) { a.callEnded = ap.callEnded; if (current && current.name === "call" && current.params.id === a.id) { setTimeout(() => endedByCounselor(a.id), 0); } else if (a.status === "booked" && a.date <= todayStr()) { a.status = "done"; } save(); } });
     if (changed) { save(); if (current && ["home", "care", "bookingList", "connect"].includes(current.name)) render(); toast("상담사가 예약을 확인·변경했습니다"); }
   }, e => console.warn(e));
 }
@@ -1055,6 +1057,12 @@ VIEWS.call = ({ id }) => {
       }
     } };
 };
+function endedByCounselor(id) {
+  clearInterval(callT); if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; }
+  const a = S.appts.find(x => x.id === id); if (a) { a.status = "done"; save(); }
+  stack = []; current = { name: "home", params: {} }; render();
+  modal("상담이 종료되었습니다", "선생님이 상담을 마쳤습니다. 작성된 상담 결과는 '지난 상담 내역'에서 확인할 수 있습니다.\n오늘 상담에 대한 상담일지를 남겨보세요.", [{ label: "나중에", soft: true }, { label: "상담일지 작성", onClick: () => { cw = null; go("counsel"); } }]);
+}
 function endCall(id) {
   clearInterval(callT); if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; }
   modal("상담을 종료할까요?", "", [{ label: "계속하기", soft: true, onClick: () => render() }, { label: "종료", onClick: () => {
