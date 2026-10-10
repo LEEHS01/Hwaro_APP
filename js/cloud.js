@@ -19,7 +19,7 @@ const FIREBASE_CONFIG = {
 };
 const CLIENT_SUFFIX = "@hwaro.app";     // 내담자 가상 이메일 접미사
 const ADMIN_SETUP_KEY = "HWARO-ADMIN-2026";   // 관리자 최초 등록 키 (Firestore 규칙과 동일해야 함)
-const PUSH_URL = "";                           // 푸시 중계 Worker 주소 (push-worker/ 배포 후 입력, 예: "https://hwaro-push.xxxx.workers.dev"). 비어 있으면 푸시 생략
+const PUSH_URL = "https://hwaro-push.lodef5252.workers.dev";                           // 푸시 중계 Worker 주소 (push-worker/ 배포 후 입력, 예: "https://hwaro-push.xxxx.workers.dev"). 비어 있으면 푸시 생략
 
 const Cloud = {
   on: false, db: null, auth: null, unsubResults: null, saveT: null,
