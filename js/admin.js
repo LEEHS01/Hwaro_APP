@@ -20,7 +20,8 @@ const age = b => { if (!b) return null; const d = parse(b), t = new Date(); let 
 
 /* ── 설정 (판정 기준, 설정 화면에서 변경) ── */
 const SETTINGS_KEY = "hwaro_admin_settings";
-let SET = (() => { try { return Object.assign({ t1: 18, t2: 25, name: "" }, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); } catch (e) { return { t1: 18, t2: 25, name: "" }; } })();
+const DEF_SET = { t1: 24, t2: 33, t3: 37, name: "" };   // 자가진단 문서 기준: 0~23 정상 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증
+let SET = (() => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); if (o.t1 === 18 && o.t2 === 25) { o.t1 = 24; o.t2 = 33; } return Object.assign({}, DEF_SET, o); } catch (e) { return { ...DEF_SET }; } })();
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SET)); } catch (e) { } }
 
 /* ── IES-R-K 하위 영역 (문항 번호 1부터) ── */
@@ -36,9 +37,10 @@ function subscales(answers) {
 /* RiskBadge: 색 + 도형 + 글자 */
 function risk(score) {
   if (score == null) return { lv: "l", name: "기록 없음", shape: "●", cls: "l" };
-  if (score >= SET.t2) return { lv: "h", name: "임상적 관심", shape: "▲", cls: "h" };
-  if (score >= SET.t1) return { lv: "m", name: "부분 PTSD 의심", shape: "◆", cls: "m" };
-  return { lv: "l", name: "정상", shape: "●", cls: "l" };
+  if (score >= SET.t3) return { lv: "h", name: "중증", shape: "▲", cls: "h" };
+  if (score >= SET.t2) return { lv: "h", name: "PTSD 추정", shape: "▲", cls: "h" };
+  if (score >= SET.t1) return { lv: "m", name: "임상적 관심", shape: "◆", cls: "m" };
+  return { lv: "l", name: "정상 범위", shape: "●", cls: "l" };
 }
 const badge = (score, lg) => { const r = risk(score); return `<span class="risk ${r.cls} ${lg ? "lg" : ""}">${r.shape} ${r.name}</span>`; };
 
@@ -46,7 +48,7 @@ const badge = (score, lg) => { const r = risk(score); return `<span class="risk 
 function signals(u) {
   const d = u.data || {}, dg = d.diag || [], out = [];
   const last = dg[dg.length - 1], prev = dg[dg.length - 2];
-  if (last && last.score >= SET.t2) out.push({ lv: "h", t: "임상적 관심 구간" });
+  if (last && last.score >= SET.t2) out.push({ lv: "h", t: last.score >= SET.t3 ? "중증 구간" : "PTSD 추정 구간" });
   if (last && prev && last.score - prev.score >= 5) out.push({ lv: "h", t: `직전 대비 +${last.score - prev.score} 급상승` });
   const dl = (d.daily || []).slice(-3);
   if (dl.length === 3 && dl.every(x => x.score < 40)) out.push({ lv: "m", t: "하루일지 3일 연속 낮음" });
@@ -195,10 +197,11 @@ function ptsdTab(u, d) {
   const dg = d.diag, last = dg[dg.length - 1], prev = dg[dg.length - 2];
   if (!last) return `<div class="empty">아직 자가진단 기록이 없습니다</div>`;
   const rk = risk(last.score), sub = subscales(last.answers), delta = prev ? last.score - prev.score : null;
-  const p1 = SET.t1 / 88 * 100, p2 = SET.t2 / 88 * 100;
+  const p1 = SET.t1 / 88 * 100, p2 = SET.t2 / 88 * 100, p3 = SET.t3 / 88 * 100;
   const hi = sub ? Object.entries(sub).sort((a, b) => b[1] / SUB[b[0]].max - a[1] / SUB[a[0]].max)[0] : null;
-  const advice = rk.lv === "h" ? `<b>권장 조치</b> · 상담 일정 앞당기기, 치료연계(전문의 평가) 안내 검토.${hi ? ` ${SUB[hi[0]].label} 영역이 두드러져 소견란에 따로 기록합니다.` : ""}`
-    : rk.lv === "m" ? `<b>권장 조치</b> · 주 1회 자가진단 추이 관찰, 안정화 콘텐츠 권장.${hi ? ` ${SUB[hi[0]].label} 영역 변화를 다음 회차에서 확인합니다.` : ""}`
+  const advice = last.score >= SET.t3 ? `<b>권장 조치</b> · 적극적인 의학적·심리적 치료가 필요한 구간입니다. 치료연계(전문의 평가)를 바로 안내하고 상담 일정을 앞당깁니다.${hi ? ` ${SUB[hi[0]].label} 영역이 두드러져 소견란에 따로 기록합니다.` : ""}`
+    : rk.lv === "h" ? `<b>권장 조치</b> · PTSD 진단 기준에 부합할 가능성이 높은 구간입니다. 정밀 심리검사와 치료연계 안내를 검토합니다.${hi ? ` ${SUB[hi[0]].label} 영역이 두드러져 소견란에 따로 기록합니다.` : ""}`
+    : rk.lv === "m" ? `<b>권장 조치</b> · 임상적 개입과 지속 관찰이 권장되는 구간입니다. 주 1회 자가진단 추이 관찰, 안정화 콘텐츠 권장.${hi ? ` ${SUB[hi[0]].label} 영역 변화를 다음 회차에서 확인합니다.` : ""}`
     : `<b>안내</b> · 정상 범위입니다. 현재 상태 유지와 재발 예방 계획을 다룹니다.`;
   return `<div class="sub">
     <div><div class="label">IES-R-K 총점 · ${md(last.date)} 자가진단</div>
@@ -210,8 +213,8 @@ function ptsdTab(u, d) {
           : `<div class="faint">문항별 응답이 없어 하위 영역을 계산할 수 없습니다 (앱에서 완료한 검사만 표시)</div>`}</div>
   </div>
   <div class="label" style="margin-top:16px">판정 구간</div>
-  <div class="band" style="--p1:${p1}%;--p2:${p2}%"><span class="mk" style="left:${Math.min(99, last.score / 88 * 100)}%"></span></div>
-  <div class="band-l"><span>0–${SET.t1 - 1} 정상</span><span>${SET.t1}</span><span>${SET.t2} 이상 임상적 관심 필요</span></div>
+  <div class="band" style="--p1:${p1}%;--p2:${p2}%;--p3:${p3}%"><span class="mk" style="left:${Math.min(99, last.score / 88 * 100)}%"></span></div>
+  <div class="band-l"><span>0–${SET.t1 - 1} 정상 범위</span><span>${SET.t1} 임상적 관심</span><span>${SET.t2} PTSD 추정</span><span>${SET.t3}+ 중증</span></div>
   <div class="advice ${rk.lv}">${advice}</div>`;
 }
 
@@ -225,8 +228,8 @@ function scoreChartPanel(d, results) {
   const yMax = Math.max(40, ...dg.map(x => x.score + 6)); const Yc = v => T + (H - T - B) * (1 - v / yMax);
   let svg = `<rect x="${L}" y="${Yc(yMax)}" width="${W - L - R}" height="${Yc(SET.t2) - Yc(yMax)}" fill="var(--risk-high-tint)"/><rect x="${L}" y="${Yc(SET.t2)}" width="${W - L - R}" height="${Yc(SET.t1) - Yc(SET.t2)}" fill="var(--risk-mid-tint)"/>`;
   [0, 10, 20, 30, 40, 50, 60, 70, 80].filter(v => v <= yMax).forEach(v => svg += `<line x1="${L}" x2="${W - R}" y1="${Yc(v)}" y2="${Yc(v)}" stroke="var(--chart-grid)"/><text x="${L - 6}" y="${Yc(v) + 4}" text-anchor="end" font-size="10" fill="var(--ink-muted)">${v}</text>`);
-  svg += `<line x1="${L}" x2="${W - R}" y1="${Yc(SET.t2)}" y2="${Yc(SET.t2)}" stroke="var(--risk-high)" stroke-dasharray="4 3"/><text x="${W - R + 6}" y="${Yc(SET.t2) + 4}" font-size="11" font-weight="600" fill="var(--risk-high-text)">${SET.t2} 임상적 관심</text>`;
-  svg += `<line x1="${L}" x2="${W - R}" y1="${Yc(SET.t1)}" y2="${Yc(SET.t1)}" stroke="var(--risk-mid)" stroke-dasharray="4 3"/><text x="${W - R + 6}" y="${Yc(SET.t1) + 4}" font-size="11" font-weight="600" fill="var(--risk-mid-text)">${SET.t1} 부분 PTSD</text>`;
+  svg += `<line x1="${L}" x2="${W - R}" y1="${Yc(SET.t2)}" y2="${Yc(SET.t2)}" stroke="var(--risk-high)" stroke-dasharray="4 3"/><text x="${W - R + 6}" y="${Yc(SET.t2) + 4}" font-size="11" font-weight="600" fill="var(--risk-high-text)">${SET.t2} PTSD 추정</text>`;
+  svg += `<line x1="${L}" x2="${W - R}" y1="${Yc(SET.t1)}" y2="${Yc(SET.t1)}" stroke="var(--risk-mid)" stroke-dasharray="4 3"/><text x="${W - R + 6}" y="${Yc(SET.t1) + 4}" font-size="11" font-weight="600" fill="var(--risk-mid-text)">${SET.t1} 임상적 관심</text>`;
   // 상담일 세로 점선
   results.filter(r => r.date >= from).forEach(r => { const i = dg.findIndex(x => x.date >= r.date); if (i < 0 || dg.length < 2) return; const x = X(Math.max(0, i - .5)); svg += `<line x1="${x}" x2="${x}" y1="${T}" y2="${H - B}" stroke="var(--ink-muted)" stroke-dasharray="2 3"/><text x="${x}" y="${T - 4}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${r.no}회차</text>`; });
   const line = (pts, color, w) => { let p = ""; pts.forEach(([x, y], i) => p += (i ? " L" : "M") + x + "," + y); return `<path d="${p}" fill="none" stroke="${color}" stroke-width="${w}"/>`; };
@@ -365,11 +368,11 @@ function statsView() {
     <div class="stats-grid">
       <div class="panel stat"><div class="label">전체 내담자</div><div class="v">${us.length}<span class="sm muted"> 명</span></div><div class="faint">이번 달 신규 ${newBy[5]}명</div></div>
       <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length}</div></div>
-      <div class="panel stat hi"><div class="label">임상적 관심 필요 (${SET.t2}+)</div><div class="v">${byLv.h}<span class="sm muted"> 명</span></div><div class="faint">치료연계 검토 대상</div></div>
+      <div class="panel stat hi"><div class="label">PTSD 추정·중증 (${SET.t2}+)</div><div class="v">${byLv.h}<span class="sm muted"> 명</span></div><div class="faint">치료연계 검토 대상</div></div>
       <div class="panel stat"><div class="label">이번 주 상담</div><div class="v">${wk.length}<span class="sm muted"> 건</span></div><div class="faint">화상 ${wk.filter(a => a.type === "화상").length} · 대면 ${wk.filter(a => a.type === "대면").length}</div></div></div>
     <div class="stats-row">
       <div class="panel"><div class="h2">IES-R-K 판정 구간 비율</div><div class="donut-wrap"><svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="${r}" fill="none" stroke="var(--surface-300)" stroke-width="18"/>${seg(byLv.l, "var(--risk-low)")}${seg(byLv.m, "var(--risk-mid)")}${seg(byLv.h, "var(--risk-high)")}<text x="75" y="80" text-anchor="middle" font-size="24" font-weight="600" fill="var(--ink)">${scored}</text><text x="75" y="96" text-anchor="middle" font-size="10" fill="var(--ink-muted)">명</text></svg>
-        <div class="dleg">${[["● 정상", byLv.l, "var(--risk-low)"], ["◆ 부분 PTSD", byLv.m, "var(--risk-mid-text)"], ["▲ 임상적 관심", byLv.h, "var(--risk-high-text)"]].map(([l, n, col]) => `<div><span style="color:${col}">${l}</span><span class="mono">${n}명 · ${scored ? Math.round(n / scored * 100) : 0}%</span></div>`).join("")}</div></div></div>
+        <div class="dleg">${[["● 정상 범위", byLv.l, "var(--risk-low)"], ["◆ 임상적 관심", byLv.m, "var(--risk-mid-text)"], ["▲ PTSD 추정·중증", byLv.h, "var(--risk-high-text)"]].map(([l, n, col]) => `<div><span style="color:${col}">${l}</span><span class="mono">${n}명 · ${scored ? Math.round(n / scored * 100) : 0}%</span></div>`).join("")}</div></div></div>
       <div class="panel"><div class="panel-h"><span class="h2">월별 신규 · 누적 내담자</span><span class="legend-row"><span><i style="background:var(--brand)"></i>신규</span><span><i style="background:var(--chart-total);border-radius:50%"></i>누적 ${cum[5] || 0}</span></span></div>${bars(newBy, "var(--brand)", Math.max(1, ...newBy))}</div></div>
     <div class="stats-row2">
       <div class="panel"><div class="h2">IES-R-K 평균 점수 변화 <span class="faint">점선 ${SET.t1}점</span></div>${lineSvg(avgBy, Math.max(30, ...avgBy.filter(v => v != null)) + 4, 0)}</div>
@@ -390,14 +393,15 @@ function settingsView() {
   return `<div class="center"><div class="panel" style="max-width:560px"><div class="h2">설정</div>
     <div class="faint" style="margin-bottom:12px">판정 기준은 배지와 그래프의 띠·점선에 바로 반영됩니다 (이 브라우저에 저장)</div>
     <div class="kv" style="grid-template-columns:160px 1fr;align-items:center;gap:10px">
-      <span class="k">부분 PTSD 의심 기준</span><input id="s-t1" class="inp" type="number" value="${SET.t1}" style="width:100px">
-      <span class="k">임상적 관심 기준</span><input id="s-t2" class="inp" type="number" value="${SET.t2}" style="width:100px">
+      <span class="k">임상적 관심 기준</span><input id="s-t1" class="inp" type="number" value="${SET.t1}" style="width:100px">
+      <span class="k">PTSD 추정 기준</span><input id="s-t2" class="inp" type="number" value="${SET.t2}" style="width:100px">
+      <span class="k">중증 기준</span><input id="s-t3" class="inp" type="number" value="${SET.t3}" style="width:100px">
       <span class="k">표시 이름</span><input id="s-name" class="inp" value="${esc(SET.name)}" placeholder="이지원 상담사"></div>
-    <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" onclick="saveSet()">저장</button><button class="btn outline" onclick="SET.t1=18;SET.t2=25;saveSettings();render()">기본값(18 / 25)</button></div>
-    <div class="faint" style="margin-top:16px">※ 내담자 앱의 자가진단 결과 문구는 자가진단 문서 기준(0~23 정상 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증)을 사용합니다. 관리자 기준과 다르면 개발자에게 통일을 요청하세요.</div>
+    <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" onclick="saveSet()">저장</button><button class="btn outline" onclick="SET.t1=24;SET.t2=33;SET.t3=37;saveSettings();render()">기본값(24 / 33 / 37)</button></div>
+    <div class="faint" style="margin-top:16px">※ 기본값은 자가진단 문서 기준(0~23 정상 범위 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증)이며 내담자 앱과 동일합니다. 여기서 바꾸면 관리자 화면에만 적용됩니다.</div>
   </div></div>`;
 }
-function saveSet() { const t1 = +$("#s-t1").value, t2 = +$("#s-t2").value; if (!(t1 > 0 && t2 > t1)) return toast("기준 점수를 확인해 주세요"); SET.t1 = t1; SET.t2 = t2; SET.name = $("#s-name").value.trim(); saveSettings(); toast("저장되었습니다"); render(); }
+function saveSet() { const t1 = +$("#s-t1").value, t2 = +$("#s-t2").value, t3 = +$("#s-t3").value; if (!(t1 > 0 && t2 > t1 && t3 > t2)) return toast("기준 점수를 확인해 주세요"); SET.t1 = t1; SET.t2 = t2; SET.t3 = t3; SET.name = $("#s-name").value.trim(); saveSettings(); toast("저장되었습니다"); render(); }
 
 /* ── 요약지 (인쇄) ── */
 function printSummary() {
