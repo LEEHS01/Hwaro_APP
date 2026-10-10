@@ -101,6 +101,7 @@ const Cloud = {
       rep(COUNSELORS, c.counselors.map((x, i) => ({ ...x, color: x.color || colors[i % colors.length] })));
     }
     window.APP_NOTICE = c.notice && c.notice.on && (c.notice.text || "").trim() ? c.notice : null;
+    window.APP_AVAIL = c.avail && typeof c.avail === "object" ? c.avail : {};
   },
 
   /* 오류 메시지 한글화 */

@@ -20,7 +20,7 @@ const age = b => { if (!b) return null; const d = parse(b), t = new Date(); let 
 
 /* ── 설정 (판정 기준, 설정 화면에서 변경) ── */
 const SETTINGS_KEY = "hwaro_admin_settings";
-const DEF_SET = { t1: 24, t2: 33, t3: 37, name: "" };   // 자가진단 문서 기준: 0~23 정상 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증
+const DEF_SET = { t1: 24, t2: 33, t3: 37, name: "", cid: "" };   // cid: 이 관리자 계정이 어느 상담사인지 (상담 가능 시간·채팅 답장 이름에 사용)   // 자가진단 문서 기준: 0~23 정상 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증
 let SET = (() => { try { const o = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); if (o.t1 === 18 && o.t2 === 25) { o.t1 = 24; o.t2 = 33; } return Object.assign({}, DEF_SET, o); } catch (e) { return { ...DEF_SET }; } })();
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SET)); } catch (e) { } }
 
@@ -63,9 +63,9 @@ const toMin = t => { const [h, m] = (t || "0:00").split(":").map(Number); return
 const fmtT = t => { const [h, m] = (t || "0:00").split(":").map(Number); const hh = h < 9 ? h + 12 : h; return `${pad(hh)}:${pad(m)}`; };
 
 /* ── 상태 ── */
-let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, nursing: {}, vitals: {}, content: null, ctab: "videos", chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", statRange: 6, avail: null, busy: false };
+let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, nursing: {}, vitals: {}, inbox: {}, content: null, ctab: "videos", schedDate: null, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", statRange: 6, avail: null, busy: false };
 // data.js 기본 콘텐츠 스냅샷 (콘텐츠 관리에서 "기본값으로" 되돌릴 때 사용 — applyContent가 배열을 제자리 교체하므로 먼저 복사)
-const DEF_CONTENT = JSON.parse(JSON.stringify({ videos: VIDEO_LIST, hospitals: HOSPITALS, helplines: HELPLINES, counselors: COUNSELORS, notice: { on: false, text: "" } }));
+const DEF_CONTENT = JSON.parse(JSON.stringify({ videos: VIDEO_LIST, hospitals: HOSPITALS, helplines: HELPLINES, counselors: COUNSELORS, notice: { on: false, text: "" }, avail: {} }));
 
 /* ── 모달/토스트 ── */
 function modal(html) { $("#modal-root").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
@@ -158,9 +158,10 @@ async function loadUsers() {
 async function loadDetail(uid) {
   try {
     const sub = (name, order) => { let q = Cloud.db.collection("users").doc(uid).collection(name); if (order) q = q.orderBy(order, "desc"); return q.get().then(q => q.docs.map(d => ({ id: d.id, ...d.data() }))).catch(() => []); };
-    const [r, m, ap, nd, vt] = await Promise.all([Cloud.loadResults(uid), sub("memos", "createdAt"),
+    const [r, m, ap, nd, vt, ib] = await Promise.all([Cloud.loadResults(uid), sub("memos", "createdAt"),
       Cloud.db.collection("users").doc(uid).collection("approvals").get().then(q => Object.fromEntries(q.docs.map(d => [d.id, d.data()]))).catch(() => ({})),
-      sub("nursing", "createdAt"), sub("vitals", "date")]);
+      sub("nursing", "createdAt"), sub("vitals", "date"), sub("inbox", "createdAt")]);
+    A.inbox[uid] = (ib || []).reverse();
     A.results[uid] = r; A.memos[uid] = m; A.approvals[uid] = ap; A.nursing[uid] = nd; A.vitals[uid] = vt; if (A.sel === uid) render();
   } catch (e) { toast(Cloud.msg(e)); }
 }
@@ -298,7 +299,7 @@ function commentsTab(u, d, r) {
 
 /* 내담자 정보 탭 */
 function infoTab(u, d) {
-  const chat = (d.chat || []).slice(-30);
+  const chat = chatThread(u).slice(-30);
   return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:16px">
     <div><div class="label" style="margin-bottom:6px">기본 정보</div>
       <div class="kv"><span class="k">등록번호</span><span class="mono">${u.no}</span><span class="k">생년월일</span><span>${u.birth || "—"}${age(u.birth) != null ? ` (${age(u.birth)}세)` : ""}</span><span class="k">성별</span><span>${u.gender || "—"}</span><span class="k">담당 상담자</span><span>${u.counselor ? counselor(u.counselor).name + " " + counselor(u.counselor).title : "미지정"}</span><span class="k">소속</span><span>${esc(u.unit || "—")}</span><span class="k">등록일</span><span>${u.createdAt || "—"}</span>${u.status === "closed" ? `<span class="k">종결</span><span>${u.closedAt || ""} · ${esc(u.closeReason || "")}${u.closeNote ? `<div class="faint" style="white-space:pre-wrap">${esc(u.closeNote)}</div>` : ""}</span>` : ""}<span class="k">상담 동의</span><span>${d.consentAt ? d.consentAt.slice(0, 10) + " 동의" : '<span class="chip gray">미작성</span>'}</span><span class="k">오늘 근무</span><span>${d.schedule && d.schedule[todayStr()] ? SHIFT_TYPES[d.schedule[todayStr()]].label : "—"}</span></div></div>
@@ -306,7 +307,7 @@ function infoTab(u, d) {
     <div><div class="label">하루일지 <span class="faint">최근 5건</span></div>${(d.daily || []).slice(-5).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")}</span><span class="mono">${x.score}%</span></div>${esc(x.text || "(내용 없음)")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
     <div><div class="label">상담일지 <span class="faint">내담자 작성</span></div>${(d.counsel || []).slice(-3).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")} · ${counselor(x.cid).name}</span><span>${"★".repeat(x.stars || 0)}</span></div>${esc(x.text || "")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
     <div><div class="label">채팅상담 기록 ${ICON.lock} <span class="faint">상담자만 열람 · 최근 30건</span></div>
-      <div class="chatlog" style="margin-top:6px">${chat.length ? chat.map(m => `<div class="b ${m.role === "me" ? "me" : ""} ${m.role === "me" && /죽|자살|끝내|사라지|해치/.test(m.text) ? "flag" : ""}">${esc(m.text)}<div class="faint">${esc(m.ts || "")}</div></div>`).join("") : `<div class="faint">채팅 기록 없음</div>`}</div></div>
+      <div class="chatlog" style="margin-top:6px">${chat.length ? chatLogHtml(u) : `<div class="faint">채팅 기록 없음</div>`}</div><button class="btn outline sm" style="margin-top:6px" onclick="openChat('${u.uid}')">대화 열기 · 답장</button></div>
   </div>`;
 }
 
@@ -362,7 +363,7 @@ function schedulePanel() {
   const nowM = new Date().getHours() * 60 + new Date().getMinutes();
   const next = todays.find(a => a.status === "booked" && toMin(a.time) + 60 >= nowM) || null;
   const u = cur(), mine = u ? (u.data?.appts || []).map(a => effAppt({ ...a, uid: u.uid, name: u.name, sessionNo: (A.results[u.uid] || []).length + 1 })).filter(a => a.status === "booked" && a.date > t).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0] : null;
-  return `<div class="panel"><div class="panel-h"><span class="h2">일정 관리</span><div class="seg">${[["day", "일"], ["week", "주"], ["month", "월"]].map(([k, l]) => `<button class="${A.schedMode === k ? "on" : ""}" onclick="A.schedMode='${k}';A.view='schedule';render()">${l}</button>`).join("")}</div></div>
+  return `<div class="panel"><div class="panel-h"><span class="h2">일정 관리</span><div class="seg">${[["day", "일"], ["week", "주"], ["month", "월"]].map(([k, l]) => `<button class="${A.schedMode === k ? "on" : ""}" onclick="A.schedMode='${k}';A.schedDate=null;A.view='schedule';render()">${l}</button>`).join("")}</div></div>
     <div class="sm" style="font-weight:600">${t.slice(0, 7).replace("-", ".")} · 오늘 ${md(t)} (${"일월화수목금토"[parse(t).getDay()]})</div>
     <div class="week">${days.map(ds => `<div><div class="d">${"월화수목금토일"[days.indexOf(ds)]}</div><div class="n ${ds === t ? "today" : ""}">${+ds.slice(8)}${all.some(a => a.date === ds && a.status === "booked") ? '<span class="dot"></span>' : ""}</div></div>`).join("")}</div>
     ${todays.length ? todays.map(a => apptRow(a, a === next)).join("") : `<div class="faint" style="padding:8px 0">오늘 예약이 없습니다</div>`}
@@ -388,18 +389,23 @@ async function cancelAppt(uid, apptId) {
   try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "cancelled", by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "cancelled" }; closeModal(); toast("예약을 취소 처리했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
 }
 /* 상담 가능 시간 (admins/{email} 문서에 저장) */
+const availKey = () => SET.cid || "_all";
+const DEF_AVAIL = { days: [1, 2, 3, 4, 5], start: "9:00", end: "6:00", open: true };
 async function openAvail() {
-  if (!A.avail) { try { const s = await Cloud.db.collection("admins").doc(A.email).get(); A.avail = (s.exists && s.data().avail) || { days: [1, 2, 3, 4, 5], start: "9:00", end: "6:00", open: true }; } catch (e) { A.avail = { days: [1, 2, 3, 4, 5], start: "9:00", end: "6:00", open: true }; } }
-  const v = A.avail, slots = [...TIME_SLOTS["오전"], ...TIME_SLOTS["오후"]];
-  modal(`<h3>상담 가능 시간</h3>
-    <label class="sm" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="av-open" ${v.open ? "checked" : ""}> 예약 받기 (끄면 '닫힘' 상태로 표시)</label>
+  if (!A.content) { const c = await Cloud.loadContent(); A.content = normContent(c); }
+  const v = Object.assign({}, DEF_AVAIL, (A.content.avail || {})[availKey()] || {}), slots = [...TIME_SLOTS["오전"], ...TIME_SLOTS["오후"]];
+  const who = SET.cid ? `${counselor(SET.cid).name} ${counselor(SET.cid).title}` : "모든 상담사 (공통)";
+  modal(`<h3>상담 가능 시간 <span class="faint">· ${who}</span></h3>
+    <div class="faint">내담자 앱 예약 화면에서 여기 정한 요일·시간만 고를 수 있습니다. "설정 → 나는 어느 상담사"로 적용 대상을 바꿉니다.</div>
+    <label class="sm" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="av-open" ${v.open ? "checked" : ""}> 예약 받기 (끄면 앱에 '예약을 받지 않습니다'로 표시)</label>
     <div class="label">요일</div><div class="chips">${["일", "월", "화", "수", "목", "금", "토"].map((d, i) => `<button class="${v.days.includes(i) ? "on" : ""}" onclick="this.classList.toggle('on')" data-d="${i}">${d}</button>`).join("")}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><div class="label">시작</div><select id="av-s" class="inp">${slots.map(s => `<option value="${s}" ${s === v.start ? "selected" : ""}>${fmtT(s)}</option>`).join("")}</select></div><div><div class="label">종료</div><select id="av-e" class="inp">${slots.map(s => `<option value="${s}" ${s === v.end ? "selected" : ""}>${fmtT(s)}</option>`).join("")}</select></div></div>
     <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn primary" onclick="saveAvail()">저장</button></div>`);
 }
 async function saveAvail() {
-  const avail = { open: $("#av-open").checked, days: [...document.querySelectorAll(".modal .chips button.on")].map(b => +b.dataset.d), start: $("#av-s").value, end: $("#av-e").value };
-  try { await Cloud.db.collection("admins").doc(A.email).set({ avail }, { merge: true }); A.avail = avail; closeModal(); toast(avail.open ? "상담 가능 시간을 저장했습니다" : "예약 받기를 닫았습니다"); } catch (e) { toast(Cloud.msg(e)); }
+  const avail = { open: $("#av-open").checked, days: [...document.querySelectorAll(".modal .chips button.on")].map(b => +b.dataset.d), start: $("#av-s").value, end: $("#av-e").value, by: A.email };
+  if (toMin(avail.end) <= toMin(avail.start)) return toast("종료 시간이 시작보다 늦어야 합니다");
+  try { await Cloud.db.collection("content").doc("app").set({ avail: { [availKey()]: avail } }, { merge: true }); (A.content.avail = A.content.avail || {})[availKey()] = avail; closeModal(); toast(avail.open ? "상담 가능 시간을 앱에 적용했습니다" : "예약 받기를 닫았습니다 (앱에 표시됨)"); } catch (e) { toast(Cloud.msg(e)); }
 }
 function showNotis() {
   const risky = (A.users || []).filter(u => signals(u).some(s => s.lv === "h"));
@@ -409,12 +415,31 @@ function showNotis() {
     ${!risky.length && !pend.length ? `<div class="empty">새 알림이 없습니다</div>` : ""}`);
 }
 async function approve(uid, apptId) { try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", by: A.email, at: new Date().toISOString() }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed" }; toast("승인했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
+function apptLine(a) { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}${a.changed ? ' <span class="chip gray">변경됨</span>' : ""}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button><button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }
+function schedMove(n) { const d = A.schedDate || todayStr(); A.schedDate = A.schedMode === "day" ? addDays(d, n) : A.schedMode === "week" ? addDays(d, 7 * n) : ymd(new Date(parse(d).getFullYear(), parse(d).getMonth() + n, 1)); render(); }
 function scheduleView() {
-  const t = todayStr(), all = allAppts().filter(a => a.status === "booked").sort((a, b) => (a.date + pad(toMin(a.time))).localeCompare(b.date + pad(toMin(b.time))));
-  const groups = {}; all.filter(a => a.date >= addDays(t, -7)).forEach(a => (groups[a.date] = groups[a.date] || []).push(a));
-  return `<div class="center"><div class="panel"><div class="panel-h"><span class="h2">일정 · 앱에서 들어온 예약</span><span class="faint">승인·변경 시 내담자 앱 알림은 서버 알림 연동 후 제공</span></div>
-    ${Object.keys(groups).sort().map(ds => `<div class="label" style="margin:12px 0 4px">${ds.replace(/-/g, ".")} (${"일월화수목금토"[parse(ds).getDay()]}) ${ds === t ? '<span class="chip">오늘</span>' : ""}</div>${groups[ds].map(a => { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button><button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }).join("")}`).join("") || `<div class="empty">예약이 없습니다</div>`}
-  </div></div>`;
+  const t = todayStr(), d = A.schedDate || t, mode = A.schedMode;
+  const all = allAppts().filter(a => a.status === "booked").map(effAppt).sort((a, b) => (a.date + pad(toMin(a.time))).localeCompare(b.date + pad(toMin(b.time))));
+  const byDay = {}; all.forEach(a => (byDay[a.date] = byDay[a.date] || []).push(a));
+  const dayName = ds => "일월화수목금토"[parse(ds).getDay()];
+  const head = (title) => `<div class="panel-h"><div><span class="h2">일정 · 앱에서 들어온 예약</span> <span class="faint">${title}</span></div>
+    <div style="display:flex;gap:8px;align-items:center"><div class="seg">${[["day", "일"], ["week", "주"], ["month", "월"]].map(([k, l]) => `<button class="${mode === k ? "on" : ""}" onclick="A.schedMode='${k}';render()">${l}</button>`).join("")}</div>
+    <button class="btn outline sm" onclick="schedMove(-1)">‹</button><button class="btn outline sm" onclick="A.schedDate=null;render()">오늘</button><button class="btn outline sm" onclick="schedMove(1)">›</button></div></div>`;
+  let body = "";
+  if (mode === "day") {
+    const rows = byDay[d] || [];
+    body = head(`${d.replace(/-/g, ".")} (${dayName(d)})${d === t ? " · 오늘" : ""}`) + (rows.length ? rows.map(apptLine).join("") : `<div class="empty">이 날 예약이 없습니다</div>`);
+  } else if (mode === "week") {
+    const mon = addDays(d, -((parse(d).getDay() + 6) % 7)), days = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
+    body = head(`${md(mon)} – ${md(days[6])}`) + days.map(ds => `<div class="label" style="margin:12px 0 4px">${ds.replace(/-/g, ".")} (${dayName(ds)}) ${ds === t ? '<span class="chip">오늘</span>' : ""} <span class="faint">${(byDay[ds] || []).length}건</span></div>${(byDay[ds] || []).map(apptLine).join("") || `<div class="faint" style="padding:0 8px">—</div>`}`).join("");
+  } else {
+    const y = parse(d).getFullYear(), m = parse(d).getMonth(), first = new Date(y, m, 1).getDay(), n = new Date(y, m + 1, 0).getDate();
+    let cells = ""; for (let i = 0; i < first; i++) cells += `<div class="mc empty"></div>`;
+    for (let i = 1; i <= n; i++) { const ds = `${y}-${pad(m + 1)}-${pad(i)}`, rows = byDay[ds] || [], pend = rows.filter(a => !(A.approvals[a.uid] || {})[a.id]).length;
+      cells += `<button class="mc ${ds === t ? "today" : ""} ${rows.length ? "has" : ""}" onclick="A.schedMode='day';A.schedDate='${ds}';render()"><span class="n mono">${i}</span>${rows.length ? `<span class="cnt">${rows.length}건${pend ? ` · 대기 ${pend}` : ""}</span>` : ""}${rows.slice(0, 3).map(a => `<span class="nm">${fmtT(a.time)} ${esc(a.name)}</span>`).join("")}${rows.length > 3 ? `<span class="nm faint">+${rows.length - 3}</span>` : ""}</button>`; }
+    body = head(`${y}.${pad(m + 1)}`) + `<div class="mgrid">${["일", "월", "화", "수", "목", "금", "토"].map(w => `<div class="mw">${w}</div>`).join("")}${cells}</div>`;
+  }
+  return `<div class="center"><div class="panel">${body}</div><div class="faint">승인·변경·취소는 내담자 앱 예약 목록에 바로 반영됩니다. 앱을 닫았을 때 오는 푸시 알림은 서버 연동 후 제공됩니다.</div></div>`;
 }
 
 /* ClientMemo */
@@ -448,7 +473,7 @@ function statsView() {
   return `<div class="center"><div class="panel-h" style="margin:0"><div><span class="h2" style="font-size:18px">통계 대시보드</span> <span class="faint">${months[0].replace("-", ".")} – ${months[months.length - 1].replace("-", ".")}</span></div><div class="seg">${[[1, "1개월"], [6, "6개월"], [0, "전체"]].map(([k, l]) => `<button class="${A.statRange === k ? "on" : ""}" onclick="A.statRange=${k};render()">${l}</button>`).join("")}</div></div>
     <div class="stats-grid">
       <div class="panel stat"><div class="label">전체 내담자</div><div class="v">${us.length}<span class="sm muted"> 명</span></div><div class="faint">이번 달 신규 ${newBy[newBy.length - 1]}명</div></div>
-      <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => u.status !== "closed" && (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length}</div></div>
+      <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => u.status !== "closed" && (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length} · 종결 ${us.filter(u => u.status === "closed").length}</div></div>
       <div class="panel stat hi"><div class="label">PTSD 추정·중증 (${SET.t2}+)</div><div class="v">${byLv.h}<span class="sm muted"> 명</span></div><div class="faint">치료연계 검토 대상</div></div>
       <div class="panel stat"><div class="label">이번 주 상담</div><div class="v">${wk.length}<span class="sm muted"> 건</span></div><div class="faint">화상 ${wk.filter(a => a.type === "화상").length} · 대면 ${wk.filter(a => a.type === "대면").length}</div></div></div>
     <div class="stats-row">
@@ -461,12 +486,38 @@ function statsView() {
   </div>`;
 }
 
-/* ── 채팅상담 관리 ── */
+/* ── 채팅상담 관리: 위기 표현 감지 + 상담자 답장 (users/{uid}/inbox → 앱 채팅창에 실시간 표시) ── */
+const CRISIS_RE = /죽|자살|끝내|사라지|해치/;
+function chatThread(u) {   // 앱 채팅(data.chat, 앱이 inbox를 합쳐 둠) + 아직 앱이 안 받은 inbox 답장
+  const chat = [...(u.data?.chat || [])], ids = new Set(chat.map(m => m.id).filter(Boolean));
+  (A.inbox[u.uid] || []).forEach(m => { if (!ids.has(m.id)) chat.push({ id: m.id, role: "counselor", text: m.text, ts: m.ts, pending: true }); });
+  return chat;
+}
 function chatsView() {
-  const rows = (A.users || []).map(u => { const c = u.data?.chat || []; const last = c[c.length - 1]; return { u, c, last, flag: c.some(m => m.role === "me" && /죽|자살|끝내|사라지|해치/.test(m.text)) }; }).filter(r => r.c.length).sort((a, b) => (b.flag ? 1 : 0) - (a.flag ? 1 : 0));
-  return `<div class="center"><div class="panel"><div class="panel-h"><span class="h2">채팅상담 · 위기 표현 감지</span><span class="faint">앱 채팅은 자동응답이며, 위기 표현이 감지된 내담자를 상단에 둡니다</span></div>
-    ${rows.length ? rows.map(r => `<div class="srow" style="grid-template-columns:36px 1fr"><span class="avatar">${esc(r.u.name[0])}</span><div><b>${esc(r.u.name)}</b> <span class="faint">${r.u.no}</span> ${r.flag ? '<span class="risk h">▲ 채팅 위기 표현</span>' : ""}<div class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.last.text)}</div><div class="acts"><button class="btn outline sm" onclick="A.view='clients';A.tab='info';selectUser('${r.u.uid}')">기록 열기</button></div></div></div>`).join("") : `<div class="empty">채팅 기록이 있는 내담자가 없습니다</div>`}
+  const rows = (A.users || []).map(u => { const c = chatThread(u); const last = c[c.length - 1]; const lastMe = [...c].reverse().find(m => m.role === "me"); const answered = lastMe ? c.indexOf(lastMe) < c.findIndex((m, i) => i > c.indexOf(lastMe) && m.role === "counselor") || c.slice(c.indexOf(lastMe) + 1).some(m => m.role === "counselor") : true;
+    return { u, c, last, flag: c.some(m => m.role === "me" && CRISIS_RE.test(m.text)), answered }; }).filter(r => r.c.length).sort((a, b) => (b.flag ? 2 : 0) + (b.answered ? 0 : 1) - ((a.flag ? 2 : 0) + (a.answered ? 0 : 1)));
+  return `<div class="center"><div class="panel"><div class="panel-h"><span class="h2">채팅상담</span><span class="faint">앱 채팅은 자동응답이 먼저 답하고, 상담자가 답장하면 앱 채팅창에 바로 표시됩니다. 위기 표현·미답장을 위에 둡니다</span></div>
+    ${rows.length ? rows.map(r => `<div class="srow" style="grid-template-columns:36px 1fr"><span class="avatar">${esc(r.u.name[0])}</span><div><b>${esc(r.u.name)}</b> <span class="faint">${r.u.no}</span> ${r.flag ? '<span class="risk h">▲ 채팅 위기 표현</span>' : ""}${!r.answered ? '<span class="chip">답장 필요</span>' : ""}<div class="sm muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.last.role === "counselor" ? "나: " : r.last.role === "bot" ? "자동응답: " : ""}${esc(r.last.text)}</div><div class="acts"><button class="btn primary sm" onclick="openChat('${r.u.uid}')">대화 열기 · 답장</button><button class="btn outline sm" onclick="A.view='clients';A.tab='info';selectUser('${r.u.uid}')">내담자 열기</button></div></div></div>`).join("") : `<div class="empty">채팅 기록이 있는 내담자가 없습니다</div>`}
   </div></div>`;
+}
+function chatLogHtml(u) { return chatThread(u).map(m => `<div class="b ${m.role === "me" ? "me" : m.role === "counselor" ? "cs" : ""} ${m.role === "me" && CRISIS_RE.test(m.text) ? "flag" : ""}">${m.role === "counselor" ? `<div class="faint">${esc(m.by === A.email || !m.by ? "나" : m.by)}${m.pending ? " · 전송됨" : ""}</div>` : m.role === "bot" ? '<div class="faint">자동응답</div>' : ""}${esc(m.text)}<div class="faint">${esc(m.ts || "")}</div></div>`).join(""); }
+async function openChat(uid) {
+  const u = (A.users || []).find(x => x.uid === uid); if (!u) return;
+  if (!A.inbox[uid]) await loadDetail(uid);
+  modal(`<h3>${esc(u.name)} <span class="faint">${u.no} · 채팅상담</span></h3>
+    <div class="chatlog" id="adm-chat" style="max-height:50vh">${chatLogHtml(u)}</div>
+    <div style="display:flex;gap:8px"><textarea id="adm-reply" class="inp" rows="2" placeholder="답장을 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${uid}')}"></textarea><button class="btn primary" onclick="sendReply('${uid}')">보내기</button></div>
+    <div class="faint">내담자 앱 채팅창에 "${esc(SET.cid ? counselor(SET.cid).name + " " + counselor(SET.cid).title : SET.name || "상담자")}" 이름으로 바로 표시됩니다. 앱을 닫아 둔 경우 다음에 열 때 보입니다.</div>`);
+  const l = $("#adm-chat"); if (l) l.scrollTop = l.scrollHeight;
+}
+async function sendReply(uid) {
+  const ta = $("#adm-reply"), text = (ta.value || "").trim(); if (!text) return;
+  const from = SET.cid ? counselor(SET.cid).name + " " + counselor(SET.cid).title : SET.name || "상담자";
+  const d = new Date(), ts = `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad(d.getMinutes())}`;
+  try {
+    await Cloud.db.collection("users").doc(uid).collection("inbox").add({ text, from, by: A.email, ts, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    ta.value = ""; await loadDetail(uid); const u = (A.users || []).find(x => x.uid === uid); const l = $("#adm-chat"); if (l) { l.innerHTML = chatLogHtml(u); l.scrollTop = l.scrollHeight; }
+  } catch (e) { toast(Cloud.msg(e)); }
 }
 
 /* ── 설정 ── */
@@ -477,12 +528,14 @@ function settingsView() {
       <span class="k">임상적 관심 기준</span><input id="s-t1" class="inp" type="number" value="${SET.t1}" style="width:100px">
       <span class="k">PTSD 추정 기준</span><input id="s-t2" class="inp" type="number" value="${SET.t2}" style="width:100px">
       <span class="k">중증 기준</span><input id="s-t3" class="inp" type="number" value="${SET.t3}" style="width:100px">
-      <span class="k">표시 이름</span><input id="s-name" class="inp" value="${esc(SET.name)}" placeholder="이지원 상담사"></div>
+      <span class="k">표시 이름</span><input id="s-name" class="inp" value="${esc(SET.name)}" placeholder="이지원 상담사">
+      <span class="k">나는 어느 상담사</span><select id="s-cid" class="inp" style="width:auto"><option value="">공통 (모든 상담사 일정에 적용)</option>${COUNSELORS.map(c => `<option value="${c.id}" ${SET.cid === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select></div>
+    <div class="faint" style="margin-top:6px">"나는 어느 상담사"를 고르면 상담 가능 시간이 그 상담사의 앱 예약 화면에만 적용되고, 채팅 답장에 그 이름이 붙습니다.</div>
     <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" onclick="saveSet()">저장</button><button class="btn outline" onclick="SET.t1=24;SET.t2=33;SET.t3=37;saveSettings();render()">기본값(24 / 33 / 37)</button></div>
     <div class="faint" style="margin-top:16px">※ 기본값은 자가진단 문서 기준(0~23 정상 범위 / 24~32 임상적 관심 / 33~36 PTSD 추정 / 37+ 중증)이며 내담자 앱과 동일합니다. 여기서 바꾸면 관리자 화면에만 적용됩니다.</div>
   </div></div>`;
 }
-function saveSet() { const t1 = +$("#s-t1").value, t2 = +$("#s-t2").value, t3 = +$("#s-t3").value; if (!(t1 > 0 && t2 > t1 && t3 > t2)) return toast("기준 점수를 확인해 주세요"); SET.t1 = t1; SET.t2 = t2; SET.t3 = t3; SET.name = $("#s-name").value.trim(); saveSettings(); toast("저장되었습니다"); render(); }
+function saveSet() { const t1 = +$("#s-t1").value, t2 = +$("#s-t2").value, t3 = +$("#s-t3").value; if (!(t1 > 0 && t2 > t1 && t3 > t2)) return toast("기준 점수를 확인해 주세요"); SET.t1 = t1; SET.t2 = t2; SET.t3 = t3; SET.name = $("#s-name").value.trim(); SET.cid = $("#s-cid").value; saveSettings(); toast("저장되었습니다"); render(); }
 
 /* ── 요약지 (인쇄) ── */
 function printSummary() {
@@ -657,7 +710,7 @@ const CSEC = {
   counselors: { label: "상담사", cols: [["id", "ID (변경 금지)", "kang"], ["name", "이름", "강○○"], ["title", "직함", "선생님"], ["phone", "연락처", "043-000-0000"], ["spec", "전문 분야", "외상 후 스트레스"], ["career", "경력", "임상심리전문가"], ["intro", "소개", "…"]], hint: "ID는 예약 기록과 연결되므로 기존 상담사의 ID는 바꾸지 마세요. 새 상담사는 영문 ID를 새로 정합니다." },
   notice: { label: "앱 공지" }
 };
-function normContent(c) { const o = JSON.parse(JSON.stringify(DEF_CONTENT)); if (!c) return o; for (const k of ["videos", "hospitals", "helplines", "counselors"]) if (Array.isArray(c[k])) o[k] = c[k].map(x => ({ ...x })); if (c.notice) o.notice = { on: !!c.notice.on, text: c.notice.text || "" }; return o; }
+function normContent(c) { const o = JSON.parse(JSON.stringify(DEF_CONTENT)); if (!c) return o; for (const k of ["videos", "hospitals", "helplines", "counselors"]) if (Array.isArray(c[k])) o[k] = c[k].map(x => ({ ...x })); if (c.notice) o.notice = { on: !!c.notice.on, text: c.notice.text || "" }; if (c.avail) o.avail = JSON.parse(JSON.stringify(c.avail)); return o; }
 function contentView() {
   if (!A.content) A.content = normContent(null);
   const k = A.ctab, c = A.content, sec = CSEC[k];

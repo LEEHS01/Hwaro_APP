@@ -231,3 +231,17 @@ textarea.inp { resize: vertical; min-height: 60px; }
 .tbl.edit td { padding: 4px; } .tbl.edit .inp { padding: 4px 8px; font-size: 13px; }
 .tbl.edit textarea.inp { min-height: 0; }
 @media (max-width: 800px) { .otiles { grid-template-columns: 1fr 1fr; } }
+
+/* 월 달력 / 상담자 채팅 말풍선 */
+.mgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.mw { text-align: center; font-size: 11px; color: var(--ink-muted); padding: 4px 0; }
+.mc { min-height: 84px; border: 1px solid var(--line); border-radius: var(--r-md); padding: 6px; text-align: left; display: flex; flex-direction: column; gap: 2px; font-size: 11px; line-height: 16px; }
+.mc.empty { border-color: transparent; }
+.mc.has { background: var(--brand-tint); border-color: transparent; }
+.mc.today .n { background: var(--brand); color: var(--on-brand); border-radius: 999px; padding: 0 6px; }
+.mc:hover { border-color: var(--brand); }
+.mc .n { font-weight: 600; font-size: 13px; align-self: flex-start; }
+.mc .cnt { font-weight: 600; color: var(--on-brand-tint); }
+.mc .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chatlog .b.cs { align-self: flex-end; background: var(--brand); color: var(--on-brand); }
+.chatlog .b.cs .faint { color: var(--on-brand); opacity: .8; }

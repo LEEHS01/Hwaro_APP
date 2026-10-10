@@ -54,7 +54,7 @@ function logout() { curId = null; S = null; P = null; try { localStorage.removeI
 async function enterCloudUser(uid) {
   const doc = await Cloud.loadUser(uid);
   if (!doc) throw new Error("profile-missing");
-  P = { uid, no: doc.no, name: doc.name, unit: doc.unit, birth: doc.birth, createdAt: doc.createdAt };
+  P = { uid, no: doc.no, name: doc.name, unit: doc.unit, birth: doc.birth, createdAt: doc.createdAt, counselor: doc.counselor || "" };
   curId = uid; lsSet(CUR_KEY, uid);
   const local = loadData(uid);
   S = Object.assign(blankData(doc.name), local || {}, doc.data || {});     // 서버 데이터 우선, 로컬 캐시 보조
@@ -63,6 +63,13 @@ async function enterCloudUser(uid) {
   // 관리자가 바꾼 콘텐츠(영상·병원·전화·상담사·공지): 캐시 먼저 적용, 서버값 오면 갱신
   try { const cc = lsGet("hwaro_content"); if (cc) Cloud.applyContent(JSON.parse(cc)); } catch (e) { }
   Cloud.subscribeContent(c => { if (!c) return; const { updatedAt, ...rest } = c; lsSet("hwaro_content", JSON.stringify(rest)); Cloud.applyContent(rest); if (current) render(); });   // 관리자가 저장하면 즉시 반영
+  // 상담자 채팅 답장 (users/{uid}/inbox) → 채팅창에 합치기
+  Cloud.db.collection("users").doc(uid).collection("inbox").orderBy("createdAt").onSnapshot(q => {
+    const ids = new Set(S.chat.map(m => m.id).filter(Boolean)); let added = 0;
+    q.docs.forEach(doc => { if (ids.has(doc.id)) return; const m = doc.data(); S.chat.push({ id: doc.id, role: "counselor", from: m.from || "상담자", text: m.text || "", ts: m.ts || nowTime() }); added++; });
+    if (!added) return; save();
+    if (current && current.name === "chat") { render(); } else toast("상담자 답장이 도착했습니다 · 채팅상담에서 확인");
+  }, e => console.warn(e));
   Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
   // 상담사의 예약 승인·변경·취소 반영
   Cloud.db.collection("users").doc(uid).collection("approvals").onSnapshot(q => {
@@ -694,6 +701,7 @@ let pickCid = null;
 VIEWS.booking = () => ({ tab: "care", html: hdr("예약하기", { close: "go('care',{},true)" }) + `
   <div class="body">
     <div class="muted center" style="font-size:13px">선생님 프로필을 누르면 소개를 볼 수 있어요</div>
+    ${P && P.counselor && COUNSELORS.some(x => x.id === P.counselor) ? `<div class="muted center" style="font-size:12px;color:var(--brand)">담당 선생님: <b>${counselor(P.counselor).name} ${counselor(P.counselor).title}</b> (예약 시 기본 선택)</div>` : ""}
     <div class="cgrid">
       ${COUNSELORS.map(c => cTile(c)).join("")}
     </div>
@@ -701,7 +709,7 @@ VIEWS.booking = () => ({ tab: "care", html: hdr("예약하기", { close: "go('ca
       <button class="btn" onclick="go('bookingList')">예약 목록</button>
       <button class="btn" onclick="go('bookingForm',{cid:pickCid})">예약하기</button>
     </div>
-    <div class="muted center" style="font-size:12px">선생님을 선택하지 않고 예약하면 지난 회차 상담자(없으면 무작위)로 배정됩니다.</div>
+    <div class="muted center" style="font-size:12px">선생님을 선택하지 않고 예약하면 담당 선생님(없으면 지난 회차 상담자)으로 배정됩니다.</div>
   </div>` });
 function cTile(c) {
   return `<div class="c ${pickCid === c.id ? "sel" : ""}" onclick="showCounselor('${c.id}')">
@@ -721,17 +729,23 @@ VIEWS.bookingForm = ({ cid, edit }) => {
   if (!bk || bk.editId !== (edit || null) || (cid && bk.cid !== cid && !bk.touched)) {
     const e = edit ? S.appts.find(a => a.id === edit) : null;
     const t = todayStr(), base = parse(t);
-    bk = { editId: edit || null, cid: e ? e.cid : (cid || S.lastCid || COUNSELORS[Math.floor(Math.random() * COUNSELORS.length)].id),
+    bk = { editId: edit || null, cid: e ? e.cid : (cid || (P && P.counselor && COUNSELORS.some(x => x.id === P.counselor) ? P.counselor : null) || S.lastCid || COUNSELORS[Math.floor(Math.random() * COUNSELORS.length)].id),
       y: base.getFullYear(), m: base.getMonth(), date: e ? e.date : null, time: e ? e.time : null, type: e ? e.type : null, touched: false };
     if (e) { const d = parse(e.date); bk.y = d.getFullYear(); bk.m = d.getMonth(); }
   }
   const c = counselor(bk.cid);
+  // 상담자가 관리자에서 정한 상담 가능 시간 (상담사별 → 공통 순)
+  const AV = window.APP_AVAIL || {}, av = AV[bk.cid] || AV._all || null;
+  const slotMin = s => { const [h, m] = s.split(":").map(Number); return (h < 9 ? h + 12 : h) * 60 + m; };
+  const dayOk = dow => !av || !av.open || !Array.isArray(av.days) || av.days.includes(dow);
+  const timeOk = s => !av || !av.open || !(av.start && av.end) || (slotMin(s) >= slotMin(av.start) && slotMin(s) < slotMin(av.end));
+  const closed = !!(av && av.open === false);
   const first = new Date(bk.y, bk.m, 1), days = new Date(bk.y, bk.m + 1, 0).getDate(), t = todayStr();
   let cells = "";
   for (let i = 0; i < first.getDay(); i++) cells += `<div class="d"></div>`;
   for (let d = 1; d <= days; d++) {
     const ds = `${bk.y}-${pad(bk.m + 1)}-${pad(d)}`, dow = new Date(bk.y, bk.m, d).getDay();
-    const past = ds < t, booked = S.appts.some(a => a.status === "booked" && a.date === ds && a.id !== bk.editId);
+    const past = ds < t || !dayOk(dow), booked = S.appts.some(a => a.status === "booked" && a.date === ds && a.id !== bk.editId);
     cells += `<div class="d ${dow === 0 ? "sun" : ""} ${past ? "past" : ""} ${ds === t ? "today" : ""}">
       <button ${past ? "disabled" : ""} class="${bk.date === ds ? "on" : ""}" onclick="bk.date='${ds}';bk.touched=true;render()">${d}${ds === t ? `<span class="lbl">오늘</span>` : ""}${booked ? `<span class="dot"></span>` : ""}</button></div>`;
   }
@@ -742,11 +756,12 @@ VIEWS.bookingForm = ({ cid, edit }) => {
         <select onchange="bk.cid=this.value;bk.touched=true;render()" style="border:1px solid var(--line);border-radius:10px;padding:6px 8px;background:#fff">
           ${COUNSELORS.map(x => `<option value="${x.id}" ${x.id === bk.cid ? "selected" : ""}>${x.name} ${x.title}</option>`).join("")}</select>
       </div>
+      ${closed ? `<div class="card" style="background:#fdebea;color:#b5423a;font-size:14px;text-align:center">${c.name} ${c.title}은 현재 예약을 받지 않습니다.<br><span style="font-size:12px">다른 선생님을 선택하거나 잠시 후 다시 확인해 주세요.</span></div>` : av && av.open ? `<div class="muted center" style="font-size:12px">상담 가능: ${(av.days || []).map(i => "일월화수목금토"[i]).join("·")} ${av.start}~${av.end} <span style="opacity:.7">(관리자 설정)</span></div>` : ""}
       <div class="cal">
         <div class="cal-h"><button onclick="bkMonth(-1)">‹</button><span>${bk.y}년 ${bk.m + 1}월</span><button onclick="bkMonth(1)">›</button></div>
         <div class="cal-g">${["일", "월", "화", "수", "목", "금", "토"].map(w => `<div class="w">${w}</div>`).join("")}${cells}</div>
       </div>
-      ${bk.date ? Object.entries(TIME_SLOTS).map(([k, arr]) => `<div class="slots-h">${k}</div><div class="slots">${arr.map(s => {
+      ${bk.date ? Object.entries(TIME_SLOTS).map(([k, arr]) => [k, arr.filter(timeOk)]).filter(([, arr]) => arr.length).map(([k, arr]) => `<div class="slots-h">${k}</div><div class="slots">${arr.map(s => {
         const taken = S.appts.some(a => a.status === "booked" && a.date === bk.date && a.time === s && a.id !== bk.editId);
         return `<button ${taken ? "disabled style='opacity:.35'" : ""} class="${bk.time === s ? "on" : ""}" onclick="bk.time='${s}';render()">${s}</button>`; }).join("")}</div>`).join("")
       : `<div class="muted center">날짜를 선택하세요</div>`}
@@ -754,7 +769,7 @@ VIEWS.bookingForm = ({ cid, edit }) => {
         <button class="btn soft ${bk.type === "화상" ? "on" : ""}" onclick="bk.type='화상';render()">화상</button>
         <button class="btn soft ${bk.type === "대면" ? "on" : ""}" onclick="bk.type='대면';render()">대면</button>
       </div>
-      <button class="btn tall" onclick="bkSubmit()" ${bk.date && bk.time && bk.type ? "" : "disabled"}>${bk.editId ? "변경 완료" : "예약"}</button>
+      <button class="btn tall" onclick="bkSubmit()" ${bk.date && bk.time && bk.type && !closed ? "" : "disabled"}>${bk.editId ? "변경 완료" : "예약"}</button>
     </div>` };
 };
 function bkMonth(n) { const d = new Date(bk.y, bk.m + n, 1); bk.y = d.getFullYear(); bk.m = d.getMonth(); render(); }
@@ -791,7 +806,8 @@ function apptCancel() {
 /* ── 채팅 상담 (p.18) ── */
 function msgHtml(m) {
   const btn = m.btn ? `<button class="chat-btn" onclick="go('${m.to}')">👉 ${esc(m.btn)}</button>` : "";
-  return `<div class="msg ${m.role}">${esc(m.text)}${btn}<span class="ts">${esc(m.ts)}</span></div>`;
+  const who = m.role === "counselor" ? `<span class="who">${esc(m.from || "상담자")}</span>` : "";
+  return `<div class="msg ${m.role}">${who}${esc(m.text)}${btn}<span class="ts">${esc(m.ts)}</span></div>`;
 }
 VIEWS.chat = () => ({ tab: "care", html: hdr("채팅상담", { close: "go('care',{},true)" }) + `
   <div class="chat-wrap">

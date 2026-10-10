@@ -337,3 +337,5 @@ input[type=range].slider { width: 100%; accent-color: var(--brand); margin: 12px
 .care-nav { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 2px solid var(--brand); margin: 4px -16px -16px; padding: 14px 0 10px; }
 .care-nav button { color: var(--brand); font-size: 16px; padding: 8px 0; }
 .care-nav button:active { background: var(--bg-soft); }
+.msg.counselor { align-self: flex-start; background: #e6f0ee; border-left: 3px solid var(--brand); border-bottom-left-radius: 4px; }
+.msg.counselor .who { display: block; font-size: 11px; color: var(--brand); font-weight: 600; margin-bottom: 2px; }
