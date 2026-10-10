@@ -319,3 +319,21 @@ input[type=range].slider { width: 100%; accent-color: var(--brand); margin: 12px
 .vitem .th { position: relative; }
 .vitem .playov { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.18); border-radius: 10px; }
 .vitem .playov svg { fill: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.5)); }
+
+/* ───── 3차: 근무표 (디자인: 당/비 표시 달력 + 아래 식단표) ───── */
+.sgrid .w.sun { color: #d6473c; } .sgrid .w.sat { color: #2f6fd6; }
+.sd.sat .n { color: #2f6fd6; }
+.sd .sh { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 700; padding: 0; background: transparent; }
+.sd .sh.none { background: transparent; height: 30px; }
+.sh.k-A { background: #ffd93b; color: #3b2e29; }           /* 당번: 노란 원 */
+.sh.k-O { color: #e2362f; }                                   /* 비번: 빨간 글자 */
+.sh.k-D { background: #f3c76b; color: #3b2e29; }           /* 주간 */
+.sh.k-N { background: #4f63c9; color: #fff; }              /* 야간 */
+.sh.k-H { background: #d9d9d9; color: #555; }              /* 휴무 */
+.legend i.k-A { background: #ffd93b; } .legend i.k-O { background: #e2362f; } .legend i.k-D { background: #f3c76b; } .legend i.k-N { background: #4f63c9; } .legend i.k-H { background: #d9d9d9; }
+.cal-h .today-btn { border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; font-size: 12px; color: var(--text); height: 26px; width: auto; }
+
+/* ───── 3차: 상담 화면 하단 3버튼 ───── */
+.care-nav { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 2px solid var(--brand); margin: 4px -16px -16px; padding: 14px 0 10px; }
+.care-nav button { color: var(--brand); font-size: 16px; padding: 8px 0; }
+.care-nav button:active { background: var(--bg-soft); }

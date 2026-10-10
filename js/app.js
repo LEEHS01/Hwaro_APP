@@ -113,11 +113,12 @@ function seed() {
 /* ───────── 라우터 ───────── */
 const TABS = [
   { id: "care", label: "상담", icon: "chat" },
+  { id: "home", label: "홈", icon: "home" },
   { id: "schedule", label: "근무표", icon: "cal" },
-  { id: "records", label: "기록", icon: "note" },
   { id: "info", label: "정보", icon: "info" }
 ];
 const ICONS = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
   cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-5 4z"/></svg>',
   note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h6M9 16h6"/></svg>',
@@ -154,7 +155,7 @@ function render() {
 function renderTabs(active, hide) {
   const bar = $("#tabbar");
   if (hide) { bar.innerHTML = ""; return; }
-  bar.innerHTML = TABS.map(t => `<button class="${active === t.id ? "on" : ""}" onclick="go('${t.id}', {}, true)">${ICONS[t.icon]}<span>${t.label}</span></button>`).join("");
+  bar.innerHTML = TABS.map(t => `<button class="${active === t.id ? "on" : ""}" onclick="${t.id === "home" ? "home()" : `go('${t.id}', {}, true)`}">${ICONS[t.icon]}<span>${t.label}</span></button>`).join("");
 }
 function hdr(title, opt = {}) {
   const right = opt.right === "search"
@@ -255,7 +256,7 @@ VIEWS.login = () => ({ noTab: true, html: `
     </div>
     ${!Cloud.on && U.list.length ? `<div class="card" style="padding:12px 16px"><div class="muted" style="font-size:12px;margin-bottom:6px">이 기기에 등록된 내담자</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px">${U.list.map(u => `<button class="tag" style="background:#fff;color:var(--brand);padding:6px 12px;border-radius:999px;font-size:13px" onclick="quickLogin('${u.id}')">${esc(u.name)} <span class="muted">${u.no}</span></button>`).join("")}</div></div>` : ""}
-    <button class="muted" style="font-size:12px;text-decoration:underline" onclick="go('admin')">관리자 페이지</button>
+    <button class="muted" style="font-size:12px;text-decoration:underline" onclick="openAdmin()">관리자 페이지</button>
   </div>` });
 async function loginSubmit() {
   const name = lg.name.trim(), birth = lg.birth, pw = lg.pw;
@@ -314,56 +315,75 @@ function consentDone(next) {
 /* ── 상담 (통합 허브) ── */
 VIEWS.care = () => {
   const up = upcoming()[0], c = up ? counselor(up.cid) : null;
-  return { tab: "care", html: hdr("상 담", { close: "home()" }) + `
-    <div class="body">
+  // 지난 상담 내역: 회차순 / 년도·월·일·시간 / 화상 or 대면 or 채팅 (상담 결과 + 완료된 예약 합침)
+  const hist = [];
+  S.results.forEach(r => hist.push({ no: r.no, date: r.date, time: "", type: r.type, cid: r.cid, kind: "result" }));
+  pastAppts().forEach(a => { if (!hist.some(h => h.date === a.date)) hist.push({ no: null, date: a.date, time: a.time, type: a.type, cid: a.cid, kind: "appt" }); });
+  hist.sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")));
+  return { tab: "care", html: hdr("", { close: "home()" }) + `
+    <div class="body" style="min-height:calc(100vh - 76px - var(--tab-h))">
       <div class="card" onclick="go('bookingList')">
-        <div class="card-tt">나의 예약</div>
-        ${up ? `<div><b>${c.name} ${c.title}</b> · ${dots(up.date)} ${up.time} · ${up.type} <span class="tag" style="background:#fff;padding:2px 10px;border-radius:999px;font-size:12px;color:var(--brand)">D-${daysBetween(todayStr(), up.date) || "DAY"}</span></div>` : `<div class="muted">예정된 상담이 없습니다</div>`}
+        <div class="card-tt">나의 예약 내역</div>
+        <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님</div>
+        ${up ? `<div class="dday">상담 예약일까지 <b>D-${daysBetween(todayStr(), up.date) || "DAY"}</b></div><div class="muted" style="text-align:right">${c.name} ${c.title} · ${dots(up.date)} ${up.time} · ${up.type}</div>`
+             : `<div class="dday"><small>예정된 상담이 없습니다</small></div>`}
+        <span class="sec-link">예약 목록 · 변경 · 취소 ›</span>
       </div>
-      <div class="row2">
-        <button class="btn soft sq" onclick="go('booking')">상담예약<small class="muted">선생님 선택 · 날짜</small></button>
-        <button class="btn soft sq" onclick="chatOpen()">채팅상담<small class="muted">24시간</small></button>
-        <button class="btn soft sq" onclick="go('connect')">상담시작<small class="muted">화상 상담 연결</small></button>
-        <button class="btn soft sq" onclick="go('results')">상담결과<small class="muted">회차별 코멘트</small></button>
+      <div class="card" style="flex:1">
+        <div class="card-tt">지난 상담 내역</div>
+        ${hist.length ? `<div style="display:flex;flex-direction:column;gap:8px">${hist.map(h => `<button class="entry" style="text-align:left;display:flex;justify-content:space-between;align-items:center;gap:8px" onclick="${h.kind === "result" ? `go('results',{no:${h.no}})` : "go('results')"}">
+            <span><b style="color:var(--brand)">${h.no ? h.no + "회차" : "상담"}</b> <span class="muted">· ${counselor(h.cid).name} ${counselor(h.cid).title}</span></span>
+            <span class="muted" style="font-size:13px;white-space:nowrap">${dots(h.date)}${h.time ? " " + h.time : ""} · ${h.type}</span></button>`).join("")}</div>
+            <span class="sec-link">상담 결과 / 코멘트 보기 ›</span>`
+          : `<div class="empty" style="padding:60px 10px">회차순 / 년도, 월, 일 시간 / 화상 OR 채팅<br><br>아직 상담 기록이 없습니다</div>`}
       </div>
-      <button class="btn soft" onclick="go('bookingList')">예약 목록 · 변경 · 취소</button>
+      <div class="care-nav">
+        <button onclick="go('booking')">상담예약</button>
+        <button onclick="go('connect')">상담시작</button>
+        <button onclick="chatOpen()">채팅상담</button>
+      </div>
     </div>` };
 };
 function chatOpen() { if (S.consentAt) go("chat"); else go("consent", { next: "chat" }); }
 
 /* ── 근무표: 스케줄표 + 식단표 ── */
-let sch = null, schTab = "shift";
+let sch = null;
 VIEWS.schedule = () => {
   const t = todayStr();
   if (!sch) { const d = parse(t); sch = { y: d.getFullYear(), m: d.getMonth(), sel: t, week: weekKey(t) }; }
-  if (schTab === "meal") return mealView();
   const first = new Date(sch.y, sch.m, 1), days = new Date(sch.y, sch.m + 1, 0).getDate();
   let cells = ""; for (let i = 0; i < first.getDay(); i++) cells += `<div class="sd"></div>`;
   for (let d = 1; d <= days; d++) {
     const ds = `${sch.y}-${pad(sch.m + 1)}-${pad(d)}`, code = S.schedule[ds], st = code && SHIFT_TYPES[code], dow = new Date(sch.y, sch.m, d).getDay();
-    cells += `<button class="sd ${ds === t ? "today" : ""} ${sch.sel === ds ? "sel" : ""} ${dow === 0 ? "sun" : ""}" onclick="schTap('${ds}')"><span class="n">${d}</span>${st ? `<span class="sh" style="background:${st.color}">${st.label}</span>` : `<span class="sh none"></span>`}</button>`;
+    cells += `<button class="sd ${ds === t ? "today" : ""} ${sch.sel === ds ? "sel" : ""} ${dow === 0 ? "sun" : ""} ${dow === 6 ? "sat" : ""}" onclick="schTap('${ds}')"><span class="n">${d}</span>${st ? `<span class="sh k-${code}">${st.label[0]}</span>` : `<span class="sh none"></span>`}</button>`;
   }
   const counts = {}; Object.entries(S.schedule).forEach(([k, v]) => { if (k.startsWith(`${sch.y}-${pad(sch.m + 1)}`)) counts[v] = (counts[v] || 0) + 1; });
   const ts = todayShift();
-  return { tab: "schedule", html: hdr("근무표", { close: "home()" }) + `
+  // 식단표 (이번 주)
+  const wk = sch.week, m = S.meals[wk] || {}, end = addDays(wk, 6);
+  return { tab: "schedule", html: hdr("", { close: "home()" }) + `
     <div class="body">
-      <div class="pill-row">
-        <button class="pill" style="min-height:48px" onclick="schTab='shift';render()">스케줄표</button>
-        <button class="pill off" style="min-height:48px" onclick="schTab='meal';render()">식단표</button>
+      <div class="card" style="padding:12px">
+        <div class="cal-h"><button onclick="schMonth(-1)">‹</button><span>${sch.y}.${pad(sch.m + 1)} <span class="muted" style="font-weight:400;font-size:12px">· 오늘 ${ts ? SHIFT_TYPES[ts].label : "미입력"}</span></span>
+          <span style="display:flex;gap:4px;align-items:center"><button class="today-btn" onclick="schToday()">오늘</button><button onclick="schMonth(1)">›</button></span></div>
+        <div class="sgrid">${["일", "월", "화", "수", "목", "금", "토"].map((w, i) => `<div class="w ${i === 0 ? "sun" : i === 6 ? "sat" : ""}">${w}</div>`).join("")}${cells}</div>
+        <div class="legend" style="flex-wrap:wrap;gap:8px 12px;margin-top:8px">${Object.entries(SHIFT_TYPES).map(([k, v]) => `<span><i class="k-${k}"></i>${v.label} ${counts[k] ? `<b>${counts[k]}</b>` : ""}</span>`).join("")}</div>
+        <div class="muted center" style="font-size:12px;margin-top:6px">날짜를 누를 때마다 주간 → 야간 → 비번 → 휴무 → 당번 → 없음 순으로 바뀝니다</div>
+        <details style="margin-top:8px"><summary class="muted" style="font-size:13px;cursor:pointer">교대 패턴으로 한 달 자동 채우기 (선택한 날짜 ${dots(sch.sel)}부터)</summary>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${SHIFT_PATTERNS.map((p, i) => `<button class="btn soft" style="min-height:42px;font-size:14px" onclick="schFill(${i})">${p.name}</button>`).join("")}
+          <button class="btn soft" style="min-height:38px;font-size:13px;color:#b5423a" onclick="schClear()">이번 달 지우기</button></div></details>
       </div>
       <div class="card" style="padding:12px">
-        <div class="cal-h"><button onclick="schMonth(-1)">‹</button><span>${sch.y}년 ${sch.m + 1}월 <span class="muted" style="font-weight:400;font-size:12px">· 오늘 ${ts ? SHIFT_TYPES[ts].label : "미입력"}</span></span><button onclick="schMonth(1)">›</button></div>
-        <div class="sgrid">${["일", "월", "화", "수", "목", "금", "토"].map(w => `<div class="w">${w}</div>`).join("")}${cells}</div>
-        <div class="muted center" style="font-size:12px;margin-top:6px">날짜를 누를 때마다 주간 → 야간 → 비번 → 휴무 → 당번 → 없음 순으로 바뀝니다</div>
-      </div>
-      <div class="legend" style="flex-wrap:wrap;gap:10px 14px">${Object.entries(SHIFT_TYPES).map(([k, v]) => `<span><i style="background:${v.color}"></i>${v.label} ${counts[k] ? `<b>${counts[k]}</b>` : ""}</span>`).join("")}</div>
-      <div class="card" style="padding:12px 14px">
-        <div class="muted" style="font-size:12px;margin-bottom:8px">교대 패턴으로 한 달 자동 채우기 (선택한 날짜 <b>${dots(sch.sel)}</b>부터 시작)</div>
-        <div style="display:flex;flex-direction:column;gap:8px">${SHIFT_PATTERNS.map((p, i) => `<button class="btn soft" style="min-height:44px;font-size:14px" onclick="schFill(${i})">${p.name}</button>`).join("")}</div>
-        <button class="btn soft" style="min-height:40px;font-size:13px;margin-top:8px;color:#b5423a" onclick="schClear()">이번 달 지우기</button>
+        <div class="cal-h"><button onclick="mealWeek(-1)">‹</button><span>식단표 <span class="muted" style="font-weight:400;font-size:12px">${dots(wk).slice(5)} ~ ${dots(end).slice(5)}</span></span><button onclick="mealWeek(1)">›</button></div>
+        <div class="mtable">
+          <div class="mh"></div>${MEAL_SLOTS.map(s => `<div class="mh">${s}</div>`).join("")}
+          ${DAY_NAMES.map((d, i) => { const ds = addDays(wk, i), sh = S.schedule[ds]; return `<div class="md ${ds === todayStr() ? "today" : ""}">${d}<small>${dots(ds).slice(8)}${sh ? ` · ${SHIFT_TYPES[sh].label}` : ""}</small></div>` + MEAL_SLOTS.map((s, j) => `<textarea class="mc" rows="2" placeholder="-" oninput="mealSet('${wk}','${d}',${j},this.value)">${esc((m[d] || [])[j] || "")}</textarea>`).join(""); }).join("")}
+        </div>
+        <div class="muted center" style="font-size:12px;margin-top:8px">칸을 눌러 바로 입력하면 자동 저장됩니다</div>
       </div>
     </div>` };
 };
+function schToday() { const d = parse(todayStr()); sch.y = d.getFullYear(); sch.m = d.getMonth(); sch.sel = todayStr(); render(); }
 function schMonth(n) { const d = new Date(sch.y, sch.m + n, 1); sch.y = d.getFullYear(); sch.m = d.getMonth(); render(); }
 function schTap(ds) {
   const order = ["D", "N", "O", "H", "A", null], cur = S.schedule[ds] || null, next = order[(order.indexOf(cur) + 1) % order.length];
@@ -376,24 +396,6 @@ function schFill(i) {
   save(); toast(`${p.name} 패턴으로 채웠습니다`); render();
 }
 function schClear() { modal("이번 달 근무를 모두 지울까요?", `${sch.y}년 ${sch.m + 1}월`, [{ label: "아니오", soft: true }, { label: "지우기", onClick: () => { Object.keys(S.schedule).forEach(k => { if (k.startsWith(`${sch.y}-${pad(sch.m + 1)}`)) delete S.schedule[k]; }); save(); render(); } }]); }
-function mealView() {
-  const wk = sch.week, m = S.meals[wk] || {}, end = addDays(wk, 6);
-  return { tab: "schedule", html: hdr("근무표", { close: "home()" }) + `
-    <div class="body">
-      <div class="pill-row">
-        <button class="pill off" style="min-height:48px" onclick="schTab='shift';render()">스케줄표</button>
-        <button class="pill" style="min-height:48px" onclick="schTab='meal';render()">식단표</button>
-      </div>
-      <div class="card" style="padding:12px">
-        <div class="cal-h"><button onclick="mealWeek(-1)">‹</button><span>${dots(wk).slice(5)} ~ ${dots(end).slice(5)}</span><button onclick="mealWeek(1)">›</button></div>
-        <div class="mtable">
-          <div class="mh"></div>${MEAL_SLOTS.map(s => `<div class="mh">${s}</div>`).join("")}
-          ${DAY_NAMES.map((d, i) => { const ds = addDays(wk, i), sh = S.schedule[ds]; return `<div class="md ${ds === todayStr() ? "today" : ""}">${d}<small>${dots(ds).slice(8)}${sh ? ` · ${SHIFT_TYPES[sh].label}` : ""}</small></div>` + MEAL_SLOTS.map((s, j) => `<textarea class="mc" rows="2" placeholder="-" oninput="mealSet('${wk}','${d}',${j},this.value)">${esc((m[d] || [])[j] || "")}</textarea>`).join(""); }).join("")}
-        </div>
-        <div class="muted center" style="font-size:12px;margin-top:8px">칸을 눌러 바로 입력하면 자동 저장됩니다</div>
-      </div>
-    </div>` };
-}
 function mealWeek(n) { sch.week = addDays(sch.week, n * 7); render(); }
 function mealSet(wk, day, j, v) { S.meals[wk] = S.meals[wk] || {}; S.meals[wk][day] = S.meals[wk][day] || ["", "", ""]; S.meals[wk][day][j] = v; save(); }
 
@@ -601,7 +603,7 @@ VIEWS.home = () => {
   const last = pastAppts()[0] || (lastR ? { cid: lastR.cid, date: lastR.date, type: lastR.type } : null);
   const weeks = S.diag.slice(-5).map(d => ({ label: weekLabel(d.date), value: d.score }));
   const cur = latestDiag();
-  return { tab: null, html: hdr("", { right: "search" }) + `
+  return { tab: "home", html: hdr("", { right: "search" }) + `
     <div class="body">
       <div class="card" onclick="go('bookingList')">
         <div class="card-tt">나의 예약 내역</div>
@@ -619,6 +621,10 @@ VIEWS.home = () => {
         <div class="card-tt">지난 상담 내역</div>
         ${last ? `<div class="pcard"><b>${counselor(last.cid).name} ${counselor(last.cid).title}</b>${counselor(last.cid).phone}<br>상담일: ${dots(last.date)}<br>${last.type} 예약</div>` : `<div class="empty">아직 상담 기록이 없습니다</div>`}
         <span class="sec-link">상담 결과 / 코멘트 보기 ›</span>
+      </div>
+      <div class="row2">
+        <button class="btn soft" style="min-height:64px" onclick="go('records')">기록<small class="muted" style="margin-left:6px">하루일지 · 상담일지</small></button>
+        <button class="btn soft" style="min-height:64px" onclick="diagState=null;go('diag',{force:true})">자가진단<small class="muted" style="margin-left:6px">다시 하기</small></button>
       </div>
     </div>` };
 };
@@ -1101,8 +1107,9 @@ VIEWS.search = () => ({ html: hdr("", { close: "home()" }) + `
   <div class="quick" id="quick">${quickBtns("")}</div>
   <div class="body" style="padding-top:0">
     <div class="muted center" style="font-size:12px">${esc(S.user.name)} · ${userById(curId)?.no || ""} 로 로그인됨</div>
-    <div class="row2"><button class="btn soft" style="min-height:44px;font-size:13px" onclick="doLogout()">로그아웃 / 계정 전환</button><button class="btn soft" style="min-height:44px;font-size:13px" onclick="adminOk=false;go('admin')">관리자 페이지</button></div>
+    <div class="row2"><button class="btn soft" style="min-height:44px;font-size:13px" onclick="doLogout()">로그아웃 / 계정 전환</button><button class="btn soft" style="min-height:44px;font-size:13px" onclick="openAdmin()">관리자 페이지</button></div>
     <button class="btn soft" style="min-height:44px;font-size:13px" onclick="resetData()">내 기록 초기화</button></div>` });
+function openAdmin() { if (Cloud.on) location.href = "admin.html"; else { adminOk = false; go("admin"); } }
 function doLogout() { logout(); stack = []; current = null; go("login", {}, true); }
 const QUICK = [["상담예약", "booking"], ["상담결과", "results"], ["채팅상담", "chat"], ["하루일지 작성", "dailyWrite"], ["근무표", "schedule"], ["자가진단", "diagDetail"], ["예약 목록", "bookingList"], ["상담일지", "counsel"], ["상담 시작", "connect"], ["PTSD란?", "ptsd"], ["안정화 훈련", "stab"], ["음성 안정화", "audio"], ["영상 안정화", "video"], ["치료연계", "hospitals"], ["지원제도", "support"]];
 function quickBtns(q) { return QUICK.filter(([l]) => !q || l.includes(q)).slice(0, q ? 20 : 4).map(([l, v]) => `<button class="btn soft" onclick="go('${v}')">${l}</button>`).join("") || `<div class="empty">검색 결과가 없습니다</div>`; }
