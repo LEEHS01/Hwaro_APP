@@ -147,14 +147,27 @@ async function doLogin() {
     A.email = email; render(); loadUsers();
   } catch (e) { toast(Cloud.msg(e)); }
 }
-async function doLogout() { try { await Cloud.auth.signOut(); } catch (e) { } A = Object.assign(A, { email: null, users: null, sel: null, results: {}, memos: {} }); render(); }
+async function doLogout() { if (unsubUsers) { unsubUsers(); unsubUsers = null; } try { await Cloud.auth.signOut(); } catch (e) { } A = Object.assign(A, { email: null, users: null, sel: null, results: {}, memos: {} }); render(); }
 async function loadUsers() {
   try {
     const c = await Cloud.loadContent(); if (c) { Cloud.applyContent(c); A.content = normContent(c); }
-    A.users = await Cloud.listUsers(); if (!A.sel && A.users.length) A.sel = sortedUsers()[0]?.uid; render(); if (A.sel) loadDetail(A.sel);
+    // 내담자 목록 실시간 구독: 앱에서 예약·자가진단·일지·채팅이 들어오면 바로 반영
+    if (unsubUsers) unsubUsers();
+    unsubUsers = Cloud.db.collection("users").orderBy("no").onSnapshot(q => {
+      const pendCount = () => allAppts().filter(a => a.status === "booked" && a.date >= todayStr() && !(A.approvals[a.uid] || {})[a.id]).length;
+      const first = !A.users, prevPend = first ? 0 : pendCount();
+      A.users = q.docs.map(d => d.data());
+      if (!A.sel && A.users.length) A.sel = sortedUsers()[0]?.uid;
+      if (!first) { const pend = pendCount(); if (pend > prevPend) toast(`새 예약 ${pend - prevPend}건이 들어왔습니다`); }
+      // 입력 중(모달·콘텐츠 편집·검색창)에는 화면을 덮어쓰지 않음
+      const ae = document.activeElement, typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT");
+      if (first || (!$("#modal-root").firstChild && A.view !== "content" && !typing)) render();
+      if (first && A.sel) loadDetail(A.sel);
+    }, e => { A.users = A.users || []; render(); toast(Cloud.msg(e)); });
   }
   catch (e) { A.users = []; render(); toast(Cloud.msg(e)); }
 }
+let unsubUsers = null;
 async function loadDetail(uid) {
   try {
     const sub = (name, order) => { let q = Cloud.db.collection("users").doc(uid).collection(name); if (order) q = q.orderBy(order, "desc"); return q.get().then(q => q.docs.map(d => ({ id: d.id, ...d.data() }))).catch(() => []); };
