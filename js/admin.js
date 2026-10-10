@@ -174,8 +174,9 @@ function sortedUsers() {
   let list = (A.users || []).filter(u => !q || (u.name || "").includes(q) || (u.no || "").includes(q));
   if (A.cfilter) list = list.filter(u => (u.counselor || "") === A.cfilter);
   if (A.filter === "booked") list = list.filter(u => nextAppt(u));
-  if (A.filter === "active") list = list.filter(u => (u.data?.appts || []).length);
-  if (A.filter === "done") list = list.filter(u => !nextAppt(u) && (u.data?.appts || []).length);
+  if (A.filter === "active") list = list.filter(u => u.status !== "closed" && (u.data?.appts || []).length);
+  if (A.filter === "done") list = list.filter(u => u.status === "closed");
+  if (A.filter !== "done") list = list.filter(u => u.status !== "closed" || A.filter === "all");
   const w = u => { const s = signals(u); return s.some(x => x.lv === "h") ? 2 : s.length ? 1 : 0; };
   return list.sort((a, b) => w(b) - w(a) || (lastScore(b) || 0) - (lastScore(a) || 0));
 }
@@ -184,15 +185,15 @@ function clientList() {
   const row = u => { const s = signals(u), sc = lastScore(u), nx = nextAppt(u), ls = lastSession(u);
     return `<button class="crow ${A.sel === u.uid ? "on" : ""}" onclick="selectUser('${u.uid}')">
       <span class="avatar">${esc((u.name || "?")[0])}</span>
-      <span><div class="nm">${esc(u.name)}<small>${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}</small> ${sc != null ? badge(sc) : ""}</div>
+      <span><div class="nm">${esc(u.name)}<small>${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}</small> ${u.status === "closed" ? '<span class="chip gray">종결</span>' : sc != null ? badge(sc) : ""}</div>
         <div class="meta">최근 ${ls ? md(ls) : "—"} · 다음 ${nx ? md(nx.date) : "미정"} ${nx && !(A.approvals[u.uid] || {})[nx.id] ? '<span class="chip gray">승인 대기</span>' : ""}</div>
         ${s.length ? `<div class="sig ${s[0].lv}">↑ ${esc(s[0].t)}</div>` : ""}</span>
       <span class="sc">${sc ?? ""}</span></button>`; };
-  const cnt = { all: all.length, booked: all.filter(u => nextAppt(u)).length, active: all.filter(u => (u.data?.appts || []).length).length };
+  const cnt = { all: all.length, booked: all.filter(u => nextAppt(u)).length, active: all.filter(u => u.status !== "closed" && (u.data?.appts || []).length).length, done: all.filter(u => u.status === "closed").length };
   return `<div class="col clist">
     <div class="tools">
       <input class="inp" placeholder="이름 · 등록번호 검색" value="${esc(A.q)}" oninput="A.q=this.value;render()">
-      <div class="chips">${[["all", `전체 ${cnt.all}`], ["booked", `예약 대기 ${cnt.booked}`], ["active", `상담 중 ${cnt.active}`], ["done", "종결"]].map(([k, l]) => `<button class="${A.filter === k ? "on" : ""}" onclick="A.filter='${k}';render()">${l}</button>`).join("")}</div>
+      <div class="chips">${[["all", `전체 ${cnt.all}`], ["booked", `예약 대기 ${cnt.booked}`], ["active", `상담 중 ${cnt.active}`], ["done", `종결 ${cnt.done}`]].map(([k, l]) => `<button class="${A.filter === k ? "on" : ""}" onclick="A.filter='${k}';render()">${l}</button>`).join("")}</div>
       <div class="faint" style="display:flex;justify-content:space-between;align-items:center"><select class="inp" style="width:auto;padding:2px 6px;font-size:12px" onchange="A.cfilter=this.value;render()"><option value="">담당 상담자 · 전체</option>${COUNSELORS.map(c => `<option value="${c.id}" ${A.cfilter === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select><span>위험도 순</span></div>
     </div>
     ${risky.length ? `<div class="sect">${ICON.flag} 위험 신호 · 상단 고정</div>${risky.map(row).join("")}` : ""}
@@ -207,9 +208,10 @@ function centerView() {
   const d = Object.assign(blankData(u.name), u.data || {}), sc = lastScore(u), r = A.results[u.uid] || [];
   const head = `<div class="panel">
     <div class="dhead"><span class="avatar lg">${esc(u.name[0])}</span>
-      <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}</h1><div class="sm muted">${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}${age(u.birth) != null || u.gender ? " · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}
+      <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}${u.status === "closed" ? ` <span class="chip gray">종결 ${md(u.closedAt || "")}</span>` : ""}</h1><div class="sm muted">${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}${age(u.birth) != null || u.gender ? " · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}
         · 담당 <select class="inp" style="width:auto;padding:1px 6px;font-size:12px;display:inline-block" onchange="assignCounselor('${u.uid}', this.value)"><option value="">미지정</option>${COUNSELORS.map(c => `<option value="${c.id}" ${u.counselor === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select></div></div>
       <span class="sp"></span>
+      ${u.status === "closed" ? `<button class="btn outline" onclick="closeCase('${u.uid}', false)">종결 해제</button>` : `<button class="btn outline" onclick="openClose('${u.uid}')">종결 처리</button>`}
       <button class="btn outline" onclick="printSummary()">${ICON.print} 요약지 PDF</button>
       <button class="btn primary" onclick="openSoapForm()">${ICON.plus} 회차 기록 작성</button></div>
     <div class="tabs">${[["info", "내담자 정보"], ["ptsd", "PTSD 사정"], ["nursing", "간호진단명", (A.nursing[u.uid] || []).filter(x => x.status !== "resolved").length], ["objective", "객관적 정보"], ["comments", "회차별 코멘트"]].map(([k, l, n]) => `<button class="${A.tab === k ? "on" : ""}" onclick="A.tab='${k}';render()">${l}${n ? ` <span class="chip">${n}</span>` : ""}</button>`).join("")}</div>
@@ -299,7 +301,7 @@ function infoTab(u, d) {
   const chat = (d.chat || []).slice(-30);
   return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:16px">
     <div><div class="label" style="margin-bottom:6px">기본 정보</div>
-      <div class="kv"><span class="k">등록번호</span><span class="mono">${u.no}</span><span class="k">생년월일</span><span>${u.birth || "—"}${age(u.birth) != null ? ` (${age(u.birth)}세)` : ""}</span><span class="k">성별</span><span>${u.gender || "—"}</span><span class="k">담당 상담자</span><span>${u.counselor ? counselor(u.counselor).name + " " + counselor(u.counselor).title : "미지정"}</span><span class="k">소속</span><span>${esc(u.unit || "—")}</span><span class="k">등록일</span><span>${u.createdAt || "—"}</span><span class="k">상담 동의</span><span>${d.consentAt ? d.consentAt.slice(0, 10) + " 동의" : '<span class="chip gray">미작성</span>'}</span><span class="k">오늘 근무</span><span>${d.schedule && d.schedule[todayStr()] ? SHIFT_TYPES[d.schedule[todayStr()]].label : "—"}</span></div></div>
+      <div class="kv"><span class="k">등록번호</span><span class="mono">${u.no}</span><span class="k">생년월일</span><span>${u.birth || "—"}${age(u.birth) != null ? ` (${age(u.birth)}세)` : ""}</span><span class="k">성별</span><span>${u.gender || "—"}</span><span class="k">담당 상담자</span><span>${u.counselor ? counselor(u.counselor).name + " " + counselor(u.counselor).title : "미지정"}</span><span class="k">소속</span><span>${esc(u.unit || "—")}</span><span class="k">등록일</span><span>${u.createdAt || "—"}</span>${u.status === "closed" ? `<span class="k">종결</span><span>${u.closedAt || ""} · ${esc(u.closeReason || "")}${u.closeNote ? `<div class="faint" style="white-space:pre-wrap">${esc(u.closeNote)}</div>` : ""}</span>` : ""}<span class="k">상담 동의</span><span>${d.consentAt ? d.consentAt.slice(0, 10) + " 동의" : '<span class="chip gray">미작성</span>'}</span><span class="k">오늘 근무</span><span>${d.schedule && d.schedule[todayStr()] ? SHIFT_TYPES[d.schedule[todayStr()]].label : "—"}</span></div></div>
     <div><div class="label">예약</div>${(d.appts || []).length ? [...d.appts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(a => `<div class="entry"><div class="d"><span>${a.date.replace(/-/g, ".")} ${fmtT(a.time)} · ${counselor(a.cid).name} ${counselor(a.cid).title} · ${a.type}</span><span>${a.status === "done" ? "완료" : a.date < todayStr() ? "지남" : (A.approvals[u.uid] || {})[a.id]?.status === "confirmed" ? "승인됨" : "승인 대기"}</span></div></div>`).join("") : `<div class="faint">예약 없음</div>`}</div>
     <div><div class="label">하루일지 <span class="faint">최근 5건</span></div>${(d.daily || []).slice(-5).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")}</span><span class="mono">${x.score}%</span></div>${esc(x.text || "(내용 없음)")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
     <div><div class="label">상담일지 <span class="faint">내담자 작성</span></div>${(d.counsel || []).slice(-3).reverse().map(x => `<div class="entry"><div class="d"><span>${x.date.replace(/-/g, ".")} · ${counselor(x.cid).name}</span><span>${"★".repeat(x.stars || 0)}</span></div>${esc(x.text || "")}</div>`).join("") || `<div class="faint">기록 없음</div>`}</div>
@@ -446,7 +448,7 @@ function statsView() {
   return `<div class="center"><div class="panel-h" style="margin:0"><div><span class="h2" style="font-size:18px">통계 대시보드</span> <span class="faint">${months[0].replace("-", ".")} – ${months[months.length - 1].replace("-", ".")}</span></div><div class="seg">${[[1, "1개월"], [6, "6개월"], [0, "전체"]].map(([k, l]) => `<button class="${A.statRange === k ? "on" : ""}" onclick="A.statRange=${k};render()">${l}</button>`).join("")}</div></div>
     <div class="stats-grid">
       <div class="panel stat"><div class="label">전체 내담자</div><div class="v">${us.length}<span class="sm muted"> 명</span></div><div class="faint">이번 달 신규 ${newBy[newBy.length - 1]}명</div></div>
-      <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length}</div></div>
+      <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => u.status !== "closed" && (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length}</div></div>
       <div class="panel stat hi"><div class="label">PTSD 추정·중증 (${SET.t2}+)</div><div class="v">${byLv.h}<span class="sm muted"> 명</span></div><div class="faint">치료연계 검토 대상</div></div>
       <div class="panel stat"><div class="label">이번 주 상담</div><div class="v">${wk.length}<span class="sm muted"> 건</span></div><div class="faint">화상 ${wk.filter(a => a.type === "화상").length} · 대면 ${wk.filter(a => a.type === "대면").length}</div></div></div>
     <div class="stats-row">
@@ -687,6 +689,22 @@ async function saveContentAll() {
   if (c.counselors.some(x => !x.id || !x.name)) return toast("상담사는 ID와 이름이 필요합니다");
   const ids = c.counselors.map(x => x.id); if (new Set(ids).size !== ids.length) return toast("상담사 ID가 중복됩니다");
   try { await Cloud.saveContent(c, A.email); Cloud.applyContent(c); A.content = normContent(c); toast("앱에 저장했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
+}
+
+/* ── 종결 처리: users/{uid}.status = "closed" (내담자 앱 데이터는 그대로, 목록·통계에서 "종결"로 분류) ── */
+function openClose(uid) {
+  const u = (A.users || []).find(x => x.uid === uid); if (!u) return;
+  modal(`<h3>종결 처리 · ${esc(u.name)} ${u.no}</h3>
+    <div><div class="label">종결일</div><input id="cl-date" class="inp" type="date" value="${todayStr()}"></div>
+    <div><div class="label">종결 사유</div><select id="cl-reason" class="inp">${["목표 달성", "증상 호전·유지", "치료연계(전원)", "내담자 요청", "연락 두절", "기타"].map(r => `<option>${r}</option>`).join("")}</select></div>
+    <div><div class="label">종결 소견 <span class="faint">상담자만 열람</span></div><textarea id="cl-note" class="inp" placeholder="IES-R-K 34 → 15점으로 안정. 재발 시 재방문 안내함."></textarea></div>
+    <div class="faint">종결해도 기록은 모두 남고, 내담자 앱은 그대로 사용할 수 있습니다. 새 예약이 들어오면 알림에 표시됩니다.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn primary" onclick="closeCase('${uid}', true)">종결</button></div>`);
+}
+async function closeCase(uid, close) {
+  const u = (A.users || []).find(x => x.uid === uid); if (!u) return;
+  const patch = close ? { status: "closed", closedAt: $("#cl-date").value || todayStr(), closeReason: $("#cl-reason").value, closeNote: $("#cl-note").value.trim(), closedBy: A.email } : { status: "active", closedAt: null, closeReason: null, closeNote: null };
+  try { await Cloud.db.collection("users").doc(uid).set(patch, { merge: true }); Object.assign(u, patch); closeModal(); toast(close ? "종결 처리했습니다" : "종결을 해제했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
 }
 
 /* ── 시작 ── */
