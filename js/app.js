@@ -61,6 +61,15 @@ async function enterCloudUser(uid) {
   if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; S.user = S.user || { name: doc.name };
   saveData(uid, S);
   Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
+  // 상담사의 예약 승인·변경·취소 반영
+  Cloud.db.collection("users").doc(uid).collection("approvals").onSnapshot(q => {
+    let changed = false;
+    q.docs.forEach(doc => { const ap = doc.data(), a = S.appts.find(x => x.id === doc.id); if (!a) return;
+      if (ap.status === "cancelled" && a.status !== "cancelled") { a.status = "cancelled"; changed = true; }
+      if (ap.date && (a.date !== ap.date || (ap.time && a.time !== ap.time))) { a.date = ap.date; if (ap.time) a.time = ap.time; a.changedBy = "counselor"; changed = true; }
+      if (ap.status === "confirmed" && !a.confirmed) { a.confirmed = true; changed = true; } });
+    if (changed) { save(); if (current && ["home", "care", "bookingList", "connect"].includes(current.name)) render(); toast("상담사가 예약을 확인·변경했습니다"); }
+  }, e => console.warn(e));
 }
 const cloudBusy = msg => { const r = $("#modal-root"); r.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(msg)}</h3><div class="typing" style="justify-content:center;display:flex"><i></i><i></i><i></i></div></div></div>`; };
 // 1차 버전 데이터가 있으면 '홍길동 (샘플)' 계정으로 이전, 없으면 샘플 계정 생성 (로컬 모드 전용)
@@ -759,7 +768,7 @@ VIEWS.bookingList = () => {
   if (!list.find(a => a.id === selAppt)) selAppt = list[0]?.id || null;
   return { html: hdr("예약 목록") + `
     <div class="body" style="min-height:calc(100vh - 64px - var(--tab-h))">
-      ${list.length ? list.map(a => { const c = counselor(a.cid); return `<button class="pcard light ${selAppt === a.id ? "sel" : ""}" style="text-align:left" onclick="selAppt='${a.id}';render()"><b>${c.name} ${c.title}</b>${c.phone}<br>상담 예정일: ${dots(a.date)} ${a.time}<br>${a.type} 예약 <span class="tag">D-${daysBetween(todayStr(), a.date) || "DAY"}</span></button>`; }).join("")
+      ${list.length ? list.map(a => { const c = counselor(a.cid); return `<button class="pcard light ${selAppt === a.id ? "sel" : ""}" style="text-align:left" onclick="selAppt='${a.id}';render()"><b>${c.name} ${c.title}</b>${c.phone}<br>상담 예정일: ${dots(a.date)} ${a.time}<br>${a.type} 예약 <span class="tag">D-${daysBetween(todayStr(), a.date) || "DAY"}</span>${a.confirmed ? ' <span class="tag" style="background:#dcebe8;color:#174744">상담사 승인</span>' : ""}${a.changedBy ? ' <span class="tag" style="background:#fbefd2;color:#7a4a00">일시 변경됨</span>' : ""}</button>`; }).join("")
       : `<div class="empty">예정된 예약이 없습니다</div>`}
       <div class="spacer" style="min-height:120px;background:url(assets/logo.png) center/180px no-repeat;opacity:.25"></div>
       <div class="row2">

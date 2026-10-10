@@ -63,7 +63,7 @@ const toMin = t => { const [h, m] = (t || "0:00").split(":").map(Number); return
 const fmtT = t => { const [h, m] = (t || "0:00").split(":").map(Number); const hh = h < 9 ? h + 12 : h; return `${pad(hh)}:${pad(m)}`; };
 
 /* ── 상태 ── */
-let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", busy: false };
+let A = { email: null, users: null, sel: null, tab: "ptsd", view: "clients", q: "", filter: "all", cfilter: "", results: {}, memos: {}, approvals: {}, chartMode: "total", chartRange: "3m", dailyOverlay: false, schedMode: "week", statRange: 6, avail: null, busy: false };
 
 /* ── 모달/토스트 ── */
 function modal(html) { $("#modal-root").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`; }
@@ -84,16 +84,22 @@ function render() {
 }
 function shell(inner, wide) {
   const alerts = (A.users || []).filter(u => signals(u).some(s => s.lv === "h")).length;
-  const nav = [["clients", "내담자", ICON.users], ["schedule", "일정", ICON.cal], ["chats", "채팅상담", ICON.chat, alerts], ["stats", "통계", ICON.stats], ["settings", "설정", ICON.cog]];
+  const chatAlerts = (A.users || []).filter(u => (u.data?.chat || []).some(m => m.role === "me" && /죽|자살|끝내|사라지|해치/.test(m.text))).length;
+  const pending = allAppts().filter(a => a.status === "booked" && a.date >= todayStr() && !(A.approvals[a.uid] || {})[a.id]).length;
+  const nav = [["home", "홈", ICON.home], ["clients", "내담자", ICON.users], ["schedule", "일정", ICON.cal], ["chats", "채팅상담", ICON.chat, chatAlerts], ["stats", "통계", ICON.stats], ["settings", "설정", ICON.cog]];
+  const notis = alerts + pending;
   return `<div class="shell">
     <div class="topbar"><span class="wordmark">화로</span><span class="chip">관리자</span><span class="sp"></span>
+      <button class="bell" title="위험 신호 ${alerts} · 승인 대기 ${pending}" onclick="showNotis()">${ICON.bell}${notis ? `<span class="badge">${notis}</span>` : ""}</button>
       <span class="avatar">${esc((SET.name || A.email)[0])}</span><span class="sm">${esc(SET.name || A.email)}</span>
       <button class="btn outline sm" onclick="doLogout()">⎋ 로그아웃</button></div>
     <div class="main ${wide ? "wide" : ""}">
-      <nav class="rail">${nav.map(([v, l, ic, n]) => `<button class="${A.view === v ? "on" : ""}" onclick="A.view='${v}';render()">${ic}<span>${l}</span>${n ? `<span class="badge">${n}</span>` : ""}</button>`).join("")}</nav>
+      <nav class="rail">${nav.map(([v, l, ic, n]) => `<button class="${(A.view === v || (v === "clients" && A.view === "home")) && !(v === "home" && A.view === "clients") ? "on" : ""}" onclick="A.view='${v === "home" ? "clients" : v}';render()">${ic}<span>${l}</span>${n ? `<span class="badge">${n}</span>` : ""}</button>`).join("")}</nav>
       ${inner}</div></div>`;
 }
 const ICON = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3"/></svg>',
   cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-5 4z"/></svg>',
@@ -187,10 +193,10 @@ function centerView() {
       <div><h1>${esc(u.name)} ${sc != null ? badge(sc) : ""}</h1><div class="sm muted">${[age(u.birth) != null ? age(u.birth) + "세" : "", u.gender || ""].filter(Boolean).join(" · ")}${age(u.birth) != null || u.gender ? " · " : ""}No. <span class="mono">${u.no}</span> · 상담 <b>${r.length}회</b> · ${esc(u.unit || "소속 미입력")}
         · 담당 <select class="inp" style="width:auto;padding:1px 6px;font-size:12px;display:inline-block" onchange="assignCounselor('${u.uid}', this.value)"><option value="">미지정</option>${COUNSELORS.map(c => `<option value="${c.id}" ${u.counselor === c.id ? "selected" : ""}>${c.name} ${c.title}</option>`).join("")}</select></div></div>
       <span class="sp"></span>
-      <button class="btn outline" onclick="printSummary()">🗎 요약지</button>
+      <button class="btn outline" onclick="printSummary()">🗎 요약지 PDF</button>
       <button class="btn primary" onclick="openSoapForm()">+ 회차 기록 작성</button></div>
-    <div class="tabs">${[["info", "내담자 정보"], ["ptsd", "PTSD 사정"], ["comments", "회차별 코멘트"]].map(([k, l]) => `<button class="${A.tab === k ? "on" : ""}" onclick="A.tab='${k}';render()">${l}</button>`).join("")}</div>
-    ${A.tab === "ptsd" ? ptsdTab(u, d) : A.tab === "comments" ? commentsTab(u, d, r) : infoTab(u, d)}
+    <div class="tabs">${[["info", "내담자 정보"], ["ptsd", "PTSD 사정"], ["nursing", "간호진단명"], ["objective", "객관적 정보"], ["comments", "회차별 코멘트"]].map(([k, l]) => `<button class="${A.tab === k ? "on" : ""}" onclick="A.tab='${k}';render()">${l}</button>`).join("")}</div>
+    ${A.tab === "ptsd" ? ptsdTab(u, d) : A.tab === "comments" ? commentsTab(u, d, r) : A.tab === "nursing" ? `<div class="empty">간호진단명 탭 · 디자인 문서에 "아직 없는 화면"으로 표시되어 내용 확정 후 구현 예정입니다.<br><span class="faint">NANDA-I 진단명 목록과 관련 요인 입력란이 들어갈 자리</span></div>` : A.tab === "objective" ? `<div class="empty">객관적 정보 탭 · 디자인 문서에 "아직 없는 화면"으로 표시되어 내용 확정 후 구현 예정입니다.<br><span class="faint">수면·활력징후 등 상담자가 측정한 객관적 지표가 들어갈 자리</span></div>` : infoTab(u, d)}
   </div>`;
   return head + (A.tab === "ptsd" ? `<div class="panel">${scoreChartPanel(d, r)}</div>` : "");
 }
@@ -257,8 +263,10 @@ function scoreChartPanel(d, results) {
 function commentsTab(u, d, r) {
   if (!r.length) return `<div class="empty">아직 회차 기록이 없습니다. 오른쪽 위 "회차 기록 작성"으로 첫 기록을 남기세요.</div>`;
   const sc = (date) => { const x = [...d.diag].filter(g => g.date <= date).pop(); return x ? x.score : null; };
+  const lvOrder = { l: 0, m: 1, h: 2 };
+  const badgeAt = (x) => { const s = sc(x.date), prev = r.find(v => v.no === x.no - 1); const rk = risk(s); if (s == null) return ""; const ps = prev ? sc(prev.date) : null; const up = ps != null && lvOrder[rk.lv] > lvOrder[risk(ps).lv]; return `<span class="risk ${rk.cls}">${rk.shape} ${rk.name}${up ? " 진입" : ""}</span>`; };
   return `<div class="tl" style="margin-top:14px">${[...r].reverse().map(x => `<div class="sess">
-    <div class="sess-h"><b>${x.no}회차</b><span class="mono">${(x.date || "").replace(/-/g, ".")}</span><span>· ${esc(x.type || "")}</span>${badge(sc(x.date))}${x.topic ? `<span class="muted">주제: ${esc(x.topic)}</span>` : ""}<span class="sp" style="flex:1"></span><button class="btn ghost sm" onclick="openSoapForm('${x.id}')">수정</button></div>
+    <div class="sess-h"><b>${x.no}회차</b><span class="mono">${(x.date || "").replace(/-/g, ".")}</span><span>· ${esc(x.type || "")}</span>${badgeAt(x)}${x.topic ? `<span class="muted">주제: ${esc(x.topic)}</span>` : ""}<span class="sp" style="flex:1"></span><button class="btn ghost sm" onclick="openSoapForm('${x.id}')">수정</button></div>
     <div class="soap">
       <div class="cell"><div class="k"><i>S</i>주관적 호소</div>${esc(x.s || "—")}</div>
       <div class="cell"><div class="k"><i>O</i>객관적 관찰</div>${esc(x.o || "—")}</div>
@@ -317,27 +325,76 @@ async function saveSoap(id) {
 
 /* SchedulePanel */
 function allAppts() { const out = []; (A.users || []).forEach(u => ((u.data && u.data.appts) || []).forEach(a => out.push({ ...a, uid: u.uid, name: u.name, sessionNo: (A.results[u.uid] || []).length + 1 }))); return out; }
+/* 상담 주제 후보: 최근 자가진단에서 가장 높은 하위 영역 */
+function topicHint(uid) { const u = (A.users || []).find(x => x.uid === uid); const dg = u?.data?.diag || []; const s = dg.length && subscales(dg[dg.length - 1].answers); if (!s) return ""; const k = Object.entries(s).sort((a, b) => b[1] / SUB[b[0]].max - a[1] / SUB[a[0]].max)[0][0]; return SUB[k].label; }
+function effAppt(a) { const ap = (A.approvals[a.uid] || {})[a.id]; return ap && ap.date ? { ...a, date: ap.date, time: ap.time || a.time, changed: true } : a; }
+function apptRow(a, isNext) {
+  const ap = (A.approvals[a.uid] || {})[a.id], e = effAppt(a), done = a.status === "done" || (a.date < todayStr());
+  const last = (A.results[a.uid] || []).find(r => r.date === a.date);
+  const hint = topicHint(a.uid);
+  return `<div class="srow ${isNext ? "next" : ""}"><span class="t">${fmtT(e.time)}</span><div><b>${esc(a.name)} · ${last ? last.no : a.sessionNo}회차</b>
+    <div class="faint">${a.type}${done ? " · 완료" : last && last.topic ? ` · 주제: ${esc(last.topic)}` : hint ? ` · 주제 후보 <b>${hint}</b>` : ""}${e.changed ? " · 변경됨" : ""}</div>
+    ${done ? "" : `<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${!(ap?.status === "confirmed" || ap?.date) ? '<span class="chip gray">승인 대기</span>' : ""}${isNext ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">▶ 상담 시작</button>` : ""}</div>`}</div></div>`;
+}
 function schedulePanel() {
-  const t = todayStr(), all = allAppts(), mon = addDays(t, -((parse(t).getDay() + 6) % 7));
+  const t = todayStr(), all = allAppts().map(effAppt), mon = addDays(t, -((parse(t).getDay() + 6) % 7));
   const days = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
-  const todays = all.filter(a => a.date === t && a.status === "booked").sort((a, b) => toMin(a.time) - toMin(b.time));
-  const next = todays.find(a => toMin(a.time) >= new Date().getHours() * 60 + new Date().getMinutes()) || todays[0];
-  const u = cur(), mine = u ? (u.data?.appts || []).filter(a => a.status === "booked" && a.date >= t).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0] : null;
+  const todays = all.filter(a => a.date === t).sort((a, b) => toMin(a.time) - toMin(b.time));
+  const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+  const next = todays.find(a => a.status === "booked" && toMin(a.time) + 60 >= nowM) || null;
+  const u = cur(), mine = u ? (u.data?.appts || []).map(a => effAppt({ ...a, uid: u.uid, name: u.name, sessionNo: (A.results[u.uid] || []).length + 1 })).filter(a => a.status === "booked" && a.date > t).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0] : null;
   return `<div class="panel"><div class="panel-h"><span class="h2">일정 관리</span><div class="seg">${[["day", "일"], ["week", "주"], ["month", "월"]].map(([k, l]) => `<button class="${A.schedMode === k ? "on" : ""}" onclick="A.schedMode='${k}';A.view='schedule';render()">${l}</button>`).join("")}</div></div>
-    <div class="faint">${t.slice(0, 7).replace("-", ".")} · 오늘 ${md(t)} (${"일월화수목금토"[parse(t).getDay()]})</div>
+    <div class="sm" style="font-weight:600">${t.slice(0, 7).replace("-", ".")} · 오늘 ${md(t)} (${"일월화수목금토"[parse(t).getDay()]})</div>
     <div class="week">${days.map(ds => `<div><div class="d">${"월화수목금토일"[days.indexOf(ds)]}</div><div class="n ${ds === t ? "today" : ""}">${+ds.slice(8)}${all.some(a => a.date === ds && a.status === "booked") ? '<span class="dot"></span>' : ""}</div></div>`).join("")}</div>
-    ${todays.length ? todays.map(a => { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow ${a === next ? "next" : ""}"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)} · ${a.sessionNo}회차</b><div class="faint">${a.type}${a.topicHint ? " · " + a.topicHint : ""}</div>
-        <div class="acts">${ap?.status === "confirmed" ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}${a === next ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">▶ 상담 시작</button>` : ""}</div></div></div>`; }).join("")
-      : `<div class="faint" style="padding:8px 0">오늘 예약이 없습니다</div>`}
-    ${mine && mine.date !== t ? `<div class="srow"><span class="t">${md(mine.date)}</span><div><b>${esc(u.name)} · 다음 예약</b><div class="faint">${fmtT(mine.time)} · ${mine.type} · D-${daysBetween(t, mine.date)}</div><div class="acts">${(A.approvals[u.uid] || {})[mine.id]?.status === "confirmed" ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${u.uid}','${mine.id}')">승인</button><span class="chip gray">승인 대기</span>`}</div></div></div>` : ""}
-    <button class="btn ghost sm" style="margin-top:6px" onclick="A.view='schedule';render()">전체 일정 보기 ›</button></div>`;
+    ${todays.length ? todays.map(a => apptRow(a, a === next)).join("") : `<div class="faint" style="padding:8px 0">오늘 예약이 없습니다</div>`}
+    ${mine ? `<div class="label" style="margin-top:8px">${esc(u.name)} 다음 예약 · ${md(mine.date)} (D-${daysBetween(t, mine.date)})</div>${apptRow(mine, false)}` : ""}
+    <button class="btn ghost sm" style="margin-top:6px" onclick="openAvail()">상담 가능 시간 열기·닫기</button>
+    <button class="btn ghost sm" style="margin-top:2px" onclick="A.view='schedule';render()">전체 일정 보기 ›</button></div>`;
+}
+/* 예약 변경: approvals/{apptId}에 새 일시 저장 → 내담자 앱이 읽어 반영 */
+function openChange(uid, apptId) {
+  const u = (A.users || []).find(x => x.uid === uid), a = (u?.data?.appts || []).find(x => x.id === apptId); if (!a) return;
+  const e = effAppt({ ...a, uid });
+  modal(`<h3>예약 변경 · ${esc(u.name)} ${u.no}</h3><div class="faint">현재 ${a.date.replace(/-/g, ".")} ${fmtT(a.time)} · ${a.type}${e.changed ? ` (변경됨: ${e.date.replace(/-/g, ".")} ${fmtT(e.time)})` : ""}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><div class="label">새 날짜</div><input id="c-date" class="inp" type="date" value="${e.date}"></div>
+    <div><div class="label">새 시간</div><select id="c-time" class="inp">${[...TIME_SLOTS["오전"], ...TIME_SLOTS["오후"]].map(s => `<option value="${s}" ${s === e.time ? "selected" : ""}>${fmtT(s)}</option>`).join("")}</select></div></div>
+    <div class="faint">저장하면 승인 처리와 함께 내담자 앱의 예약 일시가 바뀝니다. 알림 발송은 푸시 서버 연동 후 제공됩니다.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn danger sm" onclick="cancelAppt('${uid}','${apptId}')">예약 취소</button><button class="btn primary" onclick="saveChange('${uid}','${apptId}')">변경 저장</button></div>`);
+}
+async function saveChange(uid, apptId) {
+  const date = $("#c-date").value, time = $("#c-time").value; if (!date) return toast("날짜를 선택해 주세요");
+  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", date, time, by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed", date, time }; closeModal(); toast("예약을 변경했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
+}
+async function cancelAppt(uid, apptId) {
+  try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "cancelled", by: A.email, at: new Date().toISOString() }, { merge: true }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "cancelled" }; closeModal(); toast("예약을 취소 처리했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
+}
+/* 상담 가능 시간 (admins/{email} 문서에 저장) */
+async function openAvail() {
+  if (!A.avail) { try { const s = await Cloud.db.collection("admins").doc(A.email).get(); A.avail = (s.exists && s.data().avail) || { days: [1, 2, 3, 4, 5], start: "9:00", end: "6:00", open: true }; } catch (e) { A.avail = { days: [1, 2, 3, 4, 5], start: "9:00", end: "6:00", open: true }; } }
+  const v = A.avail, slots = [...TIME_SLOTS["오전"], ...TIME_SLOTS["오후"]];
+  modal(`<h3>상담 가능 시간</h3>
+    <label class="sm" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="av-open" ${v.open ? "checked" : ""}> 예약 받기 (끄면 '닫힘' 상태로 표시)</label>
+    <div class="label">요일</div><div class="chips">${["일", "월", "화", "수", "목", "금", "토"].map((d, i) => `<button class="${v.days.includes(i) ? "on" : ""}" onclick="this.classList.toggle('on')" data-d="${i}">${d}</button>`).join("")}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><div class="label">시작</div><select id="av-s" class="inp">${slots.map(s => `<option value="${s}" ${s === v.start ? "selected" : ""}>${fmtT(s)}</option>`).join("")}</select></div><div><div class="label">종료</div><select id="av-e" class="inp">${slots.map(s => `<option value="${s}" ${s === v.end ? "selected" : ""}>${fmtT(s)}</option>`).join("")}</select></div></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn outline" onclick="closeModal()">취소</button><button class="btn primary" onclick="saveAvail()">저장</button></div>`);
+}
+async function saveAvail() {
+  const avail = { open: $("#av-open").checked, days: [...document.querySelectorAll(".modal .chips button.on")].map(b => +b.dataset.d), start: $("#av-s").value, end: $("#av-e").value };
+  try { await Cloud.db.collection("admins").doc(A.email).set({ avail }, { merge: true }); A.avail = avail; closeModal(); toast(avail.open ? "상담 가능 시간을 저장했습니다" : "예약 받기를 닫았습니다"); } catch (e) { toast(Cloud.msg(e)); }
+}
+function showNotis() {
+  const risky = (A.users || []).filter(u => signals(u).some(s => s.lv === "h"));
+  const pend = allAppts().filter(a => a.status === "booked" && a.date >= todayStr() && !(A.approvals[a.uid] || {})[a.id]);
+  modal(`<h3>알림</h3>${risky.map(u => `<div class="srow" style="grid-template-columns:1fr"><div><span class="risk h">▲</span> <b>${esc(u.name)}</b> · ${esc(signals(u).filter(s => s.lv === "h").map(s => s.t).join(", "))} <button class="btn ghost sm" onclick="closeModal();A.view='clients';selectUser('${u.uid}')">열기</button></div></div>`).join("")}
+    ${pend.map(a => `<div class="srow" style="grid-template-columns:1fr"><div><span class="chip gray">승인 대기</span> <b>${esc(a.name)}</b> · ${a.date.replace(/-/g, ".")} ${fmtT(a.time)} · ${a.type} <button class="btn primary sm" onclick="approve('${a.uid}','${a.id}');closeModal()">승인</button></div></div>`).join("")}
+    ${!risky.length && !pend.length ? `<div class="empty">새 알림이 없습니다</div>` : ""}`);
 }
 async function approve(uid, apptId) { try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", by: A.email, at: new Date().toISOString() }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed" }; toast("승인했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
 function scheduleView() {
   const t = todayStr(), all = allAppts().filter(a => a.status === "booked").sort((a, b) => (a.date + pad(toMin(a.time))).localeCompare(b.date + pad(toMin(b.time))));
   const groups = {}; all.filter(a => a.date >= addDays(t, -7)).forEach(a => (groups[a.date] = groups[a.date] || []).push(a));
   return `<div class="center"><div class="panel"><div class="panel-h"><span class="h2">일정 · 앱에서 들어온 예약</span><span class="faint">승인·변경 시 내담자 앱 알림은 서버 알림 연동 후 제공</span></div>
-    ${Object.keys(groups).sort().map(ds => `<div class="label" style="margin:12px 0 4px">${ds.replace(/-/g, ".")} (${"일월화수목금토"[parse(ds).getDay()]}) ${ds === t ? '<span class="chip">오늘</span>' : ""}</div>${groups[ds].map(a => { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}<div class="acts">${ap?.status === "confirmed" ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }).join("")}`).join("") || `<div class="empty">예약이 없습니다</div>`}
+    ${Object.keys(groups).sort().map(ds => `<div class="label" style="margin:12px 0 4px">${ds.replace(/-/g, ".")} (${"일월화수목금토"[parse(ds).getDay()]}) ${ds === t ? '<span class="chip">오늘</span>' : ""}</div>${groups[ds].map(a => { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button><button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }).join("")}`).join("") || `<div class="empty">예약이 없습니다</div>`}
   </div></div>`;
 }
 
@@ -356,7 +413,8 @@ async function memoDel(id) { const u = cur(); try { await Cloud.db.collection("u
 /* ── 통계 대시보드 ── */
 function statsView() {
   const us = A.users || [], t = todayStr(), months = [];
-  for (let i = 5; i >= 0; i--) { const d = new Date(); d.setMonth(d.getMonth() - i, 1); months.push(ymd(d).slice(0, 7)); }
+  const nM = A.statRange === 1 ? 1 : A.statRange === 6 ? 6 : Math.max(6, (() => { const f = us.map(u => u.createdAt || t).sort()[0] || t; const a = parse(f), b = parse(t); return (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth() + 1; })());
+  for (let i = nM - 1; i >= 0; i--) { const d = new Date(); d.setMonth(d.getMonth() - i, 1); months.push(ymd(d).slice(0, 7)); }
   const byLv = { l: 0, m: 0, h: 0 }; us.forEach(u => { const s = lastScore(u); if (s != null) byLv[risk(s).lv]++; });
   const scored = byLv.l + byLv.m + byLv.h;
   const newBy = months.map(m => us.filter(u => (u.createdAt || "").startsWith(m)).length), cum = []; newBy.reduce((a, b, i) => cum[i] = a + b, us.filter(u => (u.createdAt || "") < months[0]).length);
@@ -368,16 +426,16 @@ function statsView() {
   const r = 56, c = 2 * Math.PI * r; let off = 0; const seg = (n, col) => { const len = scored ? n / scored * c : 0; const s = `<circle cx="75" cy="75" r="${r}" fill="none" stroke="${col}" stroke-width="18" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-off}" transform="rotate(-90 75 75)"/>`; off += len; return s; };
   const bars = (vals, col, max) => { const W = 420, H = 150, n = vals.length, bw = (W - 40) / n; return `<svg class="chart" viewBox="0 0 ${W} ${H}">${vals.map((v, i) => { const h = max ? (H - 40) * v / max : 0; return `<rect x="${20 + i * bw + bw * .3}" y="${H - 24 - h}" width="${bw * .4}" height="${h}" fill="${col}" rx="2"/><text x="${20 + i * bw + bw / 2}" y="${H - 28 - h}" text-anchor="middle" font-size="10" fill="var(--ink)">${v}</text><text x="${20 + i * bw + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${months[i] ? +months[i].slice(5) + "월" : Object.keys(ages)[i]}</text>`; }).join("")}</svg>`; };
   const lineSvg = (vals, max, min = 0) => { const W = 420, H = 150, n = vals.length, X = i => 30 + i * (W - 50) / (n - 1), Y = v => 16 + (H - 46) * (1 - (v - min) / (max - min || 1)); let p = ""; vals.forEach((v, i) => { if (v == null) return; p += (p ? " L" : "M") + X(i) + "," + Y(v); }); return `<svg class="chart" viewBox="0 0 ${W} ${H}"><line x1="30" x2="${W - 20}" y1="${Y(SET.t1)}" y2="${Y(SET.t1)}" stroke="var(--ink-muted)" stroke-dasharray="3 3"/><text x="${W - 18}" y="${Y(SET.t1) + 3}" font-size="9" fill="var(--ink-muted)">${SET.t1}</text><path d="${p}" fill="none" stroke="var(--chart-total)" stroke-width="2"/>${vals.map((v, i) => v == null ? "" : `<path d="M${X(i)},${Y(v) - 5} L${X(i) + 5},${Y(v)} L${X(i)},${Y(v) + 5} L${X(i) - 5},${Y(v)}Z" fill="var(--risk-mid)"/><text x="${X(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${+months[i].slice(5)}월</text>`).join("")}</svg>`; };
-  return `<div class="center"><div class="panel-h" style="margin:0"><div><span class="h2" style="font-size:18px">통계 대시보드</span> <span class="faint">${months[0].replace("-", ".")} – ${months[5].replace("-", ".")}</span></div></div>
+  return `<div class="center"><div class="panel-h" style="margin:0"><div><span class="h2" style="font-size:18px">통계 대시보드</span> <span class="faint">${months[0].replace("-", ".")} – ${months[months.length - 1].replace("-", ".")}</span></div><div class="seg">${[[1, "1개월"], [6, "6개월"], [0, "전체"]].map(([k, l]) => `<button class="${A.statRange === k ? "on" : ""}" onclick="A.statRange=${k};render()">${l}</button>`).join("")}</div></div>
     <div class="stats-grid">
-      <div class="panel stat"><div class="label">전체 내담자</div><div class="v">${us.length}<span class="sm muted"> 명</span></div><div class="faint">이번 달 신규 ${newBy[5]}명</div></div>
+      <div class="panel stat"><div class="label">전체 내담자</div><div class="v">${us.length}<span class="sm muted"> 명</span></div><div class="faint">이번 달 신규 ${newBy[newBy.length - 1]}명</div></div>
       <div class="panel stat"><div class="label">상담 진행 중</div><div class="v">${us.filter(u => (u.data?.appts || []).length).length}<span class="sm muted"> 명</span></div><div class="faint">예약 대기 ${us.filter(u => nextAppt(u)).length}</div></div>
       <div class="panel stat hi"><div class="label">PTSD 추정·중증 (${SET.t2}+)</div><div class="v">${byLv.h}<span class="sm muted"> 명</span></div><div class="faint">치료연계 검토 대상</div></div>
       <div class="panel stat"><div class="label">이번 주 상담</div><div class="v">${wk.length}<span class="sm muted"> 건</span></div><div class="faint">화상 ${wk.filter(a => a.type === "화상").length} · 대면 ${wk.filter(a => a.type === "대면").length}</div></div></div>
     <div class="stats-row">
       <div class="panel"><div class="h2">IES-R-K 판정 구간 비율</div><div class="donut-wrap"><svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="${r}" fill="none" stroke="var(--surface-300)" stroke-width="18"/>${seg(byLv.l, "var(--risk-low)")}${seg(byLv.m, "var(--risk-mid)")}${seg(byLv.h, "var(--risk-high)")}<text x="75" y="80" text-anchor="middle" font-size="24" font-weight="600" fill="var(--ink)">${scored}</text><text x="75" y="96" text-anchor="middle" font-size="10" fill="var(--ink-muted)">명</text></svg>
         <div class="dleg">${[["● 정상 범위", byLv.l, "var(--risk-low)"], ["◆ 임상적 관심", byLv.m, "var(--risk-mid-text)"], ["▲ PTSD 추정·중증", byLv.h, "var(--risk-high-text)"]].map(([l, n, col]) => `<div><span style="color:${col}">${l}</span><span class="mono">${n}명 · ${scored ? Math.round(n / scored * 100) : 0}%</span></div>`).join("")}</div></div></div>
-      <div class="panel"><div class="panel-h"><span class="h2">월별 신규 · 누적 내담자</span><span class="legend-row"><span><i style="background:var(--brand)"></i>신규</span><span><i style="background:var(--chart-total);border-radius:50%"></i>누적 ${cum[5] || 0}</span></span></div>${bars(newBy, "var(--brand)", Math.max(1, ...newBy))}</div></div>
+      <div class="panel"><div class="panel-h"><span class="h2">월별 신규 · 누적 내담자</span><span class="legend-row"><span><i style="background:var(--brand)"></i>신규</span><span><i style="background:var(--chart-total);border-radius:50%"></i>누적</span></span></div>${(() => { const W = 420, H = 170, n = months.length, bw = (W - 50) / n, maxC = Math.max(1, ...cum), Y = v => 16 + (H - 50) * (1 - v / maxC); let line = ""; cum.forEach((v, i) => line += (i ? " L" : "M") + (25 + i * bw + bw / 2) + "," + Y(v)); return `<svg class="chart" viewBox="0 0 ${W} ${H}">${[0, .25, .5, .75, 1].map(f => `<line x1="25" x2="${W - 10}" y1="${Y(maxC * f)}" y2="${Y(maxC * f)}" stroke="var(--chart-grid)"/><text x="20" y="${Y(maxC * f) + 3}" text-anchor="end" font-size="9" fill="var(--ink-muted)">${Math.round(maxC * f)}</text>`).join("")}${newBy.map((v, i) => { const h = (H - 50) * v / maxC; return `<rect x="${25 + i * bw + bw * .35}" y="${Y(v)}" width="${bw * .3}" height="${h}" fill="var(--brand)" rx="2"/><text x="${25 + i * bw + bw / 2}" y="${H - 20}" text-anchor="middle" font-size="10" fill="var(--ink-muted)">${+months[i].slice(5)}월</text><text x="${25 + i * bw + bw / 2}" y="${H - 7}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink)">신규 ${v}</text>`; }).join("")}<path d="${line}" fill="none" stroke="var(--chart-total)" stroke-width="2"/>${cum.map((v, i) => `<circle cx="${25 + i * bw + bw / 2}" cy="${Y(v)}" r="4" fill="var(--surface-200)" stroke="var(--chart-total)" stroke-width="2"/>`).join("")}<text x="${25 + (n - 1) * bw + bw / 2 - 8}" y="${Y(cum[n - 1] || 0) - 8}" text-anchor="end" font-size="10" font-weight="700" fill="var(--ink)">누적 ${cum[n - 1] || 0}</text></svg>`; })()}</div></div>
     <div class="stats-row2">
       <div class="panel"><div class="h2">IES-R-K 평균 점수 변화 <span class="faint">점선 ${SET.t1}점</span></div>${lineSvg(avgBy, Math.max(30, ...avgBy.filter(v => v != null)) + 4, 0)}</div>
       <div class="panel"><div class="panel-h"><span class="h2">연령 · 성별 분포</span><span class="legend-row"><span><i style="background:var(--chart-intrusion)"></i>여</span><span><i style="background:var(--chart-avoidance)"></i>남</span></span></div>${agesSvg}<div class="faint">성별 미선택 ${us.filter(u => age(u.birth) != null && !u.gender).length}명은 막대에서 제외</div></div></div>
