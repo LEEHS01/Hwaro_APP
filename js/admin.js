@@ -762,7 +762,7 @@ async function closeCase(uid, close) {
 
 /* ── 시작 ── */
 (function boot() {
-  if (!Cloud.init()) { render(); return; }
+  if (!Cloud.init("admin")) { render(); return; }   // 내담자 앱과 로그인 세션 분리
   Cloud.auth.onAuthStateChanged(async user => {
     if (user && !Cloud.isClient(user) && await Cloud.isAdmin(user.email)) { A.email = user.email; render(); loadUsers(); }
     else { if (user && Cloud.isClient(user)) { /* 내담자 세션은 건드리지 않음 */ } A.email = null; render(); }

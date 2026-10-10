@@ -23,12 +23,13 @@ const ADMIN_SETUP_KEY = "HWARO-ADMIN-2026";   // 관리자 최초 등록 키 (Fi
 const Cloud = {
   on: false, db: null, auth: null, unsubResults: null, saveT: null,
 
-  init() {
+  // name을 주면(관리자: "admin") 별도 Firebase 앱 인스턴스를 써서 같은 브라우저에서 내담자 로그인과 세션이 섞이지 않음
+  init(name) {
     try {
       if (!window.firebase || !firebase.initializeApp) return false;
-      firebase.initializeApp(FIREBASE_CONFIG);
-      this.auth = firebase.auth();
-      this.db = firebase.firestore();
+      const app = name ? firebase.initializeApp(FIREBASE_CONFIG, name) : firebase.initializeApp(FIREBASE_CONFIG);
+      this.auth = app.auth();
+      this.db = app.firestore();
       this.db.enablePersistence({ synchronizeTabs: true }).catch(() => { });   // 오프라인 캐시
       this.on = true; return true;
     } catch (e) { console.warn("Firebase init 실패", e); return false; }
