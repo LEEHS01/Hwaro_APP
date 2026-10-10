@@ -63,6 +63,8 @@ async function enterCloudUser(uid) {
   // 관리자가 바꾼 콘텐츠(영상·병원·전화·상담사·공지): 캐시 먼저 적용, 서버값 오면 갱신
   try { const cc = lsGet("hwaro_content"); if (cc) Cloud.applyContent(JSON.parse(cc)); } catch (e) { }
   Cloud.subscribeContent(c => { if (!c) return; const { updatedAt, ...rest } = c; lsSet("hwaro_content", JSON.stringify(rest)); Cloud.applyContent(rest); if (current) render(); });   // 관리자가 저장하면 즉시 반영
+  // 담당 상담자·종결 등 프로필 변경 실시간 반영 (관리자가 지정하면 재로그인 없이 바뀜)
+  Cloud.db.collection("users").doc(uid).onSnapshot(s => { if (!s.exists || !P) return; const d = s.data(), c = d.counselor || ""; if (c !== P.counselor) { P.counselor = c; if (current) render(); if (c && COUNSELORS.some(x => x.id === c)) toast(`담당 선생님이 ${counselor(c).name} ${counselor(c).title}으로 지정되었습니다`); } }, e => console.warn(e));
   // 상담자 채팅 답장 (users/{uid}/inbox) → 채팅창에 합치기
   Cloud.db.collection("users").doc(uid).collection("inbox").orderBy("createdAt").onSnapshot(q => {
     const ids = new Set(S.chat.map(m => m.id).filter(Boolean)); let added = 0;
@@ -345,6 +347,7 @@ VIEWS.care = () => {
       <div class="card" onclick="go('bookingList')">
         <div class="card-tt">나의 예약 내역</div>
         <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님</div>
+        ${P && P.counselor && COUNSELORS.some(x => x.id === P.counselor) ? `<div class="muted" style="font-size:12px;color:var(--brand)">담당 선생님: <b>${counselor(P.counselor).name} ${counselor(P.counselor).title}</b></div>` : ""}
         ${up ? `<div class="dday">상담 예약일까지 <b>D-${daysBetween(todayStr(), up.date) || "DAY"}</b></div><div class="muted" style="text-align:right">${c.name} ${c.title} · ${dots(up.date)} ${up.time} · ${up.type}</div>`
              : `<div class="dday"><small>예정된 상담이 없습니다</small></div>`}
         <span class="sec-link">예약 목록 · 변경 · 취소 ›</span>
@@ -629,6 +632,7 @@ VIEWS.home = () => {
       <div class="card" onclick="go('bookingList')">
         <div class="card-tt">나의 예약 내역</div>
         <div class="hello">안녕하세요, <span class="nm">${esc(S.user.name)}</span> 님 <span class="muted" style="font-size:12px">${userById(curId)?.no || ""}</span></div>
+        ${P && P.counselor && COUNSELORS.some(x => x.id === P.counselor) ? `<div class="muted" style="font-size:12px;color:var(--brand)">담당 선생님: <b>${counselor(P.counselor).name} ${counselor(P.counselor).title}</b></div>` : ""}
         ${todayShift() ? `<div class="muted" style="text-align:right;font-size:12px">오늘 근무: <b style="color:${SHIFT_TYPES[todayShift()].color};-webkit-text-stroke:.3px #777">${SHIFT_TYPES[todayShift()].label}</b></div>` : ""}
         ${up ? `<div class="dday">상담 예약일까지 <b>D-${daysBetween(todayStr(), up.date) || "DAY"}</b></div>
                 <div class="muted" style="text-align:right">${counselor(up.cid).name} ${counselor(up.cid).title} · ${dots(up.date)} ${up.time} · ${up.type}</div>`
