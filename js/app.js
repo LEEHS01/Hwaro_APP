@@ -36,8 +36,9 @@ function saveUsers() { lsSet(USERS_KEY, JSON.stringify(U)); }
 const dataKey = id => "hwaro_data_" + id;
 function loadData(id) { try { const r = lsGet(dataKey(id)); if (r) return JSON.parse(r); } catch (e) { } return null; }
 function saveData(id, data) { lsSet(dataKey(id), JSON.stringify(data)); }
-function save() { if (curId && S) saveData(curId, S); }
-function userById(id) { return U.list.find(u => u.id === id); }
+let P = null;                                  // 클라우드 모드: 현재 내담자 프로필 {uid,no,name,unit,birth,createdAt}
+function save() { if (!curId || !S) return; saveData(curId, S); if (Cloud.on) Cloud.saveData(curId, S); }
+function userById(id) { if (Cloud.on) return P && P.uid === id ? { ...P, id } : null; return U.list.find(u => u.id === id); }
 function newUserNo() { U.seq = (U.seq || 0) + 1; return "HW-" + String(U.seq).padStart(4, "0"); }
 function blankData(name) {
   return { user: { name }, diag: [], lastDiag: null, appts: [], results: [], daily: [], counsel: [], chat: [], lastCid: null, schedule: {}, meals: {}, consentAt: null };
@@ -48,9 +49,23 @@ function registerUser(name, unit, birth, data) {
   U.list.push(u); saveUsers(); saveData(id, data || blankData(name)); return u;
 }
 function loginAs(id) { curId = id; lsSet(CUR_KEY, id); S = loadData(id) || blankData(userById(id)?.name || ""); if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; }
-function logout() { curId = null; S = null; try { localStorage.removeItem(CUR_KEY); } catch (e) { } }
-// 1차 버전 데이터가 있으면 '홍길동 (샘플)' 계정으로 이전, 없으면 샘플 계정 생성
+function logout() { curId = null; S = null; P = null; try { localStorage.removeItem(CUR_KEY); } catch (e) { } if (Cloud.on) Cloud.logout().catch(() => { }); }
+// 클라우드 모드: 로그인된 내담자의 프로필·데이터를 불러와 세션 시작
+async function enterCloudUser(uid) {
+  const doc = await Cloud.loadUser(uid);
+  if (!doc) throw new Error("profile-missing");
+  P = { uid, no: doc.no, name: doc.name, unit: doc.unit, birth: doc.birth, createdAt: doc.createdAt };
+  curId = uid; lsSet(CUR_KEY, uid);
+  const local = loadData(uid);
+  S = Object.assign(blankData(doc.name), local || {}, doc.data || {});     // 서버 데이터 우선, 로컬 캐시 보조
+  if (!S.schedule) S.schedule = {}; if (!S.meals) S.meals = {}; S.user = S.user || { name: doc.name };
+  saveData(uid, S);
+  Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
+}
+const cloudBusy = msg => { const r = $("#modal-root"); r.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(msg)}</h3><div class="typing" style="justify-content:center;display:flex"><i></i><i></i><i></i></div></div></div>`; };
+// 1차 버전 데이터가 있으면 '홍길동 (샘플)' 계정으로 이전, 없으면 샘플 계정 생성 (로컬 모드 전용)
 (function migrate() {
+  if (Cloud.init()) return;
   if (U.list.length) return;
   let legacy = null; try { const r = lsGet(LEGACY_KEY); if (r) legacy = JSON.parse(r); } catch (e) { }
   const data = legacy || seed(); data.schedule = data.schedule || sampleSchedule(); data.meals = data.meals || sampleMeals();
@@ -217,7 +232,7 @@ const todayShift = () => S.schedule?.[todayStr()] || null;
 const VIEWS = {};
 
 /* ── 로그인 / 내담자 등록 ── */
-let lg = { mode: "login", name: "", unit: "", birth: "" };
+let lg = { mode: "login", name: "", unit: "", birth: "", pw: "" };
 VIEWS.login = () => ({ noTab: true, html: `
   <div class="body" style="min-height:100vh;justify-content:center;gap:18px">
     <img src="assets/logo.png" alt="HWARO" style="width:170px;margin:0 auto">
@@ -232,16 +247,34 @@ VIEWS.login = () => ({ noTab: true, html: `
       ${lg.mode === "join" ? `<label class="muted">소속 (소방서 · 센터)</label><input id="lg-unit" class="inp" value="${esc(lg.unit)}" placeholder="○○소방서 ○○119안전센터" oninput="lg.unit=this.value">` : ""}
       <label class="muted">생년월일</label>
       <input id="lg-birth" class="inp" type="date" value="${esc(lg.birth)}" oninput="lg.birth=this.value">
+      ${Cloud.on ? `<label class="muted">비밀번호 ${lg.mode === "join" ? "(6자리 이상, 다른 폰에서 로그인할 때 사용)" : ""}</label>
+      <input id="lg-pw" class="inp" type="password" value="${esc(lg.pw)}" placeholder="••••••" oninput="lg.pw=this.value" onkeydown="if(event.key==='Enter')loginSubmit()">` : ""}
       <button class="btn dark tall" onclick="loginSubmit()">${lg.mode === "login" ? "로그인" : "등록하고 자가진단 시작"}</button>
       ${lg.mode === "join" ? `<div class="muted" style="font-size:12px">등록하면 내담자 번호가 자동으로 부여되고, 첫 PTSD 자가진단이 바로 시작됩니다.</div>` : ""}
+      ${Cloud.on ? "" : `<div class="muted" style="font-size:12px;color:#b5423a">※ 클라우드 연결 실패: 이 기기에만 저장되는 모드로 동작합니다. 인터넷 연결 후 앱을 다시 열어주세요.</div>`}
     </div>
-    ${U.list.length ? `<div class="card" style="padding:12px 16px"><div class="muted" style="font-size:12px;margin-bottom:6px">이 기기에 등록된 내담자</div>
+    ${!Cloud.on && U.list.length ? `<div class="card" style="padding:12px 16px"><div class="muted" style="font-size:12px;margin-bottom:6px">이 기기에 등록된 내담자</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px">${U.list.map(u => `<button class="tag" style="background:#fff;color:var(--brand);padding:6px 12px;border-radius:999px;font-size:13px" onclick="quickLogin('${u.id}')">${esc(u.name)} <span class="muted">${u.no}</span></button>`).join("")}</div></div>` : ""}
     <button class="muted" style="font-size:12px;text-decoration:underline" onclick="go('admin')">관리자 페이지</button>
   </div>` });
-function loginSubmit() {
-  const name = lg.name.trim(), birth = lg.birth;
+async function loginSubmit() {
+  const name = lg.name.trim(), birth = lg.birth, pw = lg.pw;
   if (!name) return toast("이름을 입력해 주세요");
+  if (Cloud.on) {
+    if (!birth) return toast("생년월일을 입력해 주세요");
+    if (!pw || pw.length < 6) return toast("비밀번호를 6자리 이상 입력해 주세요");
+    try {
+      if (lg.mode === "login") {
+        cloudBusy("로그인 중"); const uid = await Cloud.login(name, birth, pw); await enterCloudUser(uid); closeModal();
+        lg = { mode: "login", name: "", unit: "", birth: "", pw: "" }; diagState = null; if (diagDue()) go("diag", {}, true); else home();
+      } else {
+        cloudBusy("등록 중"); const prof = await Cloud.register(name, lg.unit.trim(), birth, pw); await enterCloudUser(prof.uid); closeModal();
+        lg = { mode: "login", name: "", unit: "", birth: "", pw: "" }; diagState = null; go("diag", {}, true);
+        modal("등록되었습니다", `${prof.name}님의 내담자 번호는 ${prof.no} 입니다.\n이제 첫 PTSD 자가진단을 시작합니다.`, [{ label: "자가진단 시작" }]);
+      }
+    } catch (e) { closeModal(); console.warn(e); modal(lg.mode === "login" ? "로그인 실패" : "등록 실패", Cloud.msg(e)); }
+    return;
+  }
   if (lg.mode === "login") {
     const u = U.list.find(x => x.name === name && (!birth || x.birth === birth));
     if (!u) return modal("등록된 내담자가 없습니다", "이름과 생년월일을 확인하거나 '처음 이용'으로 등록해 주세요.", [{ label: "확인" }, { label: "처음 이용", onClick: () => { lg.mode = "join"; render(); } }]);
@@ -364,10 +397,28 @@ function mealView() {
 function mealWeek(n) { sch.week = addDays(sch.week, n * 7); render(); }
 function mealSet(wk, day, j, v) { S.meals[wk] = S.meals[wk] || {}; S.meals[wk][day] = S.meals[wk][day] || ["", "", ""]; S.meals[wk][day][j] = v; save(); }
 
-/* ── 관리자 페이지 (이 기기에 등록된 내담자) ── */
+/* ── 관리자 페이지 ──
+   클라우드 모드: 관리자 이메일 로그인 → Firestore의 모든 내담자
+   로컬 모드  : 비밀번호 0000 → 이 기기에 등록된 내담자 */
 let adminOk = false, adminSel = null, adminPin = "";
+let adm = { mode: "login", email: "", pw: "", key: "", users: null, loading: false, detail: null };
 VIEWS.admin = ({ id }) => {
-  if (!adminOk) return { noTab: true, html: hdr("관리자", { close: "adminOk=false;back()" }) + `
+  if (!adminOk) {
+    if (Cloud.on) return { noTab: true, html: hdr("관리자", { close: "adminOk=false;back()" }) + `
+      <div class="body" style="padding-top:30px">
+        <div class="card" style="display:flex;flex-direction:column;gap:10px">
+          <div class="pill-row" style="margin-bottom:4px">
+            <button class="pill ${adm.mode === "login" ? "" : "off"}" style="min-height:44px;font-size:15px" onclick="adm.mode='login';render()">관리자 로그인</button>
+            <button class="pill ${adm.mode === "join" ? "" : "off"}" style="min-height:44px;font-size:15px" onclick="adm.mode='join';render()">관리자 등록</button>
+          </div>
+          <label class="muted">이메일</label><input class="inp" type="email" value="${esc(adm.email)}" placeholder="admin@example.com" oninput="adm.email=this.value">
+          <label class="muted">비밀번호</label><input class="inp" type="password" value="${esc(adm.pw)}" placeholder="••••••" oninput="adm.pw=this.value" onkeydown="if(event.key==='Enter')adminLogin()">
+          ${adm.mode === "join" ? `<label class="muted">관리자 등록 키</label><input class="inp" type="password" value="${esc(adm.key)}" placeholder="등록 키" oninput="adm.key=this.value">
+            <div class="muted" style="font-size:12px">등록 키는 앱 관리자(개발자)에게 받으세요. 키가 맞아야 관리자 권한이 부여됩니다.</div>` : ""}
+          <button class="btn dark" onclick="adminLogin()">${adm.mode === "login" ? "입장" : "등록하고 입장"}</button>
+        </div>
+      </div>` };
+    return { noTab: true, html: hdr("관리자", { close: "adminOk=false;back()" }) + `
     <div class="body" style="padding-top:60px">
       <div class="card center" style="padding:28px 16px">
         <div style="font-size:18px;color:var(--brand);margin-bottom:12px">관리자 비밀번호</div>
@@ -376,6 +427,8 @@ VIEWS.admin = ({ id }) => {
         <div class="muted" style="font-size:12px;margin-top:10px">초기 비밀번호 0000 · 이 기기에 등록된 내담자만 표시됩니다</div>
       </div>
     </div>` };
+  }
+  if (Cloud.on) return adminCloudView(id);
   const sel = id ? userById(id) : null;
   if (sel) {
     const d = loadData(sel.id) || blankData(sel.name), dg = d.diag[d.diag.length - 1];
@@ -408,14 +461,75 @@ VIEWS.admin = ({ id }) => {
       <div class="muted" style="font-size:12px">※ 현재는 이 기기 안의 데이터만 보입니다. 여러 폰의 내담자를 한곳에서 보려면 서버(클라우드 DB) 연동이 필요합니다.</div>
     </div>` };
 };
-function adminLogin() { if ($("#admin-pin").value === ADMIN_PIN) { adminOk = true; render(); } else toast("비밀번호가 틀렸습니다"); }
-function adminAddResult(id) {
+async function adminLogin() {
+  if (!Cloud.on) { if ($("#admin-pin").value === ADMIN_PIN) { adminOk = true; render(); } else toast("비밀번호가 틀렸습니다"); return; }
+  const email = adm.email.trim(), pw = adm.pw;
+  if (!email || !pw) return toast("이메일과 비밀번호를 입력해 주세요");
+  try {
+    cloudBusy(adm.mode === "login" ? "확인 중" : "등록 중");
+    if (adm.mode === "join") await Cloud.adminRegister(email, pw, adm.key.trim());
+    const ok = await Cloud.adminLogin(email, pw);
+    closeModal();
+    if (!ok) { await Cloud.auth.signOut(); return modal("관리자 권한이 없습니다", "이 계정은 관리자로 등록되어 있지 않습니다. '관리자 등록'에서 등록 키로 등록해 주세요."); }
+    adminOk = true; adm.users = null; adm.pw = ""; render();
+  } catch (e) { closeModal(); modal("실패", Cloud.msg(e)); }
+}
+function adminCloudView(id) {
+  if (id) {
+    if (!adm.detail || adm.detail.uid !== id) {
+      if (!adm.loading) { adm.loading = true; Promise.all([Cloud.loadUser(id), Cloud.loadResults(id)]).then(([u, r]) => { adm.detail = { uid: id, u, r }; adm.loading = false; render(); }).catch(e => { adm.loading = false; toast(Cloud.msg(e)); }); }
+      return { noTab: true, html: hdr("내담자 정보", { close: "go('admin',{},false);stack.pop()" }) + `<div class="empty">불러오는 중…</div>` };
+    }
+    const { u, r } = adm.detail, d = Object.assign(blankData(u.name), u.data || {}), dg = d.diag[d.diag.length - 1];
+    return { noTab: true, html: hdr("내담자 정보", { close: "go('admin',{},false);stack.pop()" }) + `
+      <div class="body">
+        <div class="pcard"><b>${esc(u.name)} <span style="font-size:13px;opacity:.9">${u.no}</span></b>${esc(u.unit || "소속 미입력")}<br>생년월일 ${u.birth || "-"} · 등록일 ${dots(u.createdAt || "")}</div>
+        <div class="card"><div class="card-tt">PTSD 자가진단 이력</div>
+          ${d.diag.length ? barChart(d.diag.slice(-8).map(x => ({ label: weekLabel(x.date), value: x.score, color: diagGrade(x.score).color })), 88) + `<div class="muted">최근 ${dg.score}점 · ${diagGrade(dg.score).name} (${dots(dg.date)})</div>` : `<div class="empty">아직 검사 기록이 없습니다</div>`}</div>
+        <div class="card"><div class="card-tt">기록 현황</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+            <div><div style="font-size:24px;color:var(--brand)">${d.daily.length}</div><div class="muted" style="font-size:12px">하루일지</div></div>
+            <div><div style="font-size:24px;color:var(--brand)">${d.counsel.length}</div><div class="muted" style="font-size:12px">상담일지</div></div>
+            <div><div style="font-size:24px;color:var(--brand)">${d.appts.length}</div><div class="muted" style="font-size:12px">예약</div></div></div>
+          ${[...d.daily].slice(-3).reverse().map(x => `<div class="entry" style="margin-top:8px"><div class="d"><span>하루일지 ${dots(x.date)}</span><span>${x.score}%</span></div><p>${esc(x.text || "(내용 없음)")}</p></div>`).join("")}
+          ${[...d.counsel].slice(-2).reverse().map(x => `<div class="entry" style="margin-top:8px"><div class="d"><span>상담일지 ${dots(x.date)} · ${counselor(x.cid).name}</span><span>${"★".repeat(x.stars)}</span></div><p>${esc(x.text || "")}</p></div>`).join("")}
+          ${d.appts.filter(a => a.status === "booked").map(a => `<div class="muted" style="font-size:12px;margin-top:6px">예약: ${dots(a.date)} ${a.time} · ${counselor(a.cid).name} · ${a.type}</div>`).join("")}
+          <div class="muted" style="font-size:12px;margin-top:8px">${d.consentAt ? "상담 동의: " + d.consentAt.slice(0, 10) : "상담 동의서 미작성"}</div></div>
+        <div class="card"><div class="card-tt">상담 결과 / 코멘트 입력 <span class="muted">(내담자 앱의 '상담결과'에 바로 표시)</span></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <select id="ar-cid" class="inp" style="flex:1">${COUNSELORS.map(c => `<option value="${c.id}">${c.name} ${c.title}</option>`).join("")}</select>
+            <select id="ar-type" class="inp" style="width:90px"><option>대면</option><option>화상</option><option>채팅</option></select></div>
+          <textarea id="ar-text" class="ta" style="min-height:120px;background:#fff" placeholder="이번 회차 상담 결과와 다음 회차까지의 과제를 적어주세요"></textarea>
+          <button class="btn" style="margin-top:8px" onclick="adminAddResult('${id}')">${r.length + 1}회차 결과 저장</button>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">${[...r].reverse().map(x => `<div class="entry"><div class="d"><span>${x.no}회차 · ${counselor(x.cid).name} ${counselor(x.cid).title} · ${x.type}</span><span>${dots(x.date)}</span></div><p>${esc(x.text)}</p></div>`).join("")}</div></div>
+        <button class="btn soft" style="color:#b5423a" onclick="adminDelete('${id}')">이 내담자 기록 삭제</button>
+      </div>` };
+  }
+  if (!adm.users) {
+    if (!adm.loading) { adm.loading = true; Cloud.listUsers().then(l => { adm.users = l; adm.loading = false; render(); }).catch(e => { adm.loading = false; adm.users = []; modal("목록을 불러올 수 없습니다", Cloud.msg(e)); }); }
+    return { noTab: true, html: hdr("관리자 페이지", { close: "adminExit()" }) + `<div class="empty">불러오는 중…</div>` };
+  }
+  return { noTab: true, html: hdr("관리자 페이지", { close: "adminExit()" }) + `
+    <div class="body">
+      <div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">등록 내담자 ${adm.users.length}명 · 번호 순</span><button class="muted" style="font-size:12px;text-decoration:underline" onclick="adm.users=null;render()">새로고침</button></div>
+      ${adm.users.map(u => { const d = u.data || {}, dg = d.diag && d.diag[d.diag.length - 1]; return `<button class="pcard light" style="text-align:left" onclick="adm.detail=null;go('admin',{id:'${u.uid}'})"><b>${esc(u.name)} <span style="font-size:13px">${u.no}</span></b>${esc(u.unit || "소속 미입력")} · 등록 ${dots(u.createdAt || "")}<br>${dg ? `최근 자가진단 <b style="display:inline;color:${diagGrade(dg.score).color}">${dg.score}점 ${diagGrade(dg.score).name}</b>` : "자가진단 기록 없음"} · 일지 ${(d.daily || []).length}건</button>`; }).join("") || `<div class="empty">등록된 내담자가 없습니다</div>`}
+      <button class="btn soft" onclick="adminExit()">관리자 로그아웃</button>
+    </div>` };
+}
+async function adminExit() { adminOk = false; adm = { mode: "login", email: "", pw: "", key: "", users: null, loading: false, detail: null }; if (Cloud.on) { try { await Cloud.auth.signOut(); } catch (e) { } } stack = []; go("login", {}, true); }
+async function adminAddResult(id) {
   const text = $("#ar-text").value.trim(); if (!text) return toast("내용을 입력해 주세요");
+  if (Cloud.on) {
+    try { cloudBusy("저장 중"); const r = adm.detail ? adm.detail.r : []; await Cloud.addResult(id, { no: r.length + 1, cid: $("#ar-cid").value, date: todayStr(), type: $("#ar-type").value, text }); closeModal(); adm.detail = null; toast("저장되었습니다"); render(); }
+    catch (e) { closeModal(); modal("저장 실패", Cloud.msg(e)); }
+    return;
+  }
   const d = loadData(id) || blankData(userById(id).name);
   d.results.push({ no: d.results.length + 1, cid: $("#ar-cid").value, date: todayStr(), type: $("#ar-type").value, text });
   saveData(id, d); if (id === curId) S = d; toast("저장되었습니다"); render();
 }
 function adminDelete(id) {
+  if (Cloud.on) { const u = adm.detail?.u; return modal("내담자 기록을 삭제할까요?", `${u?.name} (${u?.no})의 자가진단·일지·상담 결과가 모두 지워집니다.`, [{ label: "아니오", soft: true }, { label: "삭제", onClick: async () => { try { cloudBusy("삭제 중"); await Cloud.deleteUser(id); closeModal(); adm.users = null; adm.detail = null; stack.pop(); go("admin", {}, false); } catch (e) { closeModal(); modal("삭제 실패", Cloud.msg(e)); } } }]); }
   const u = userById(id); modal("내담자를 삭제할까요?", `${u.name} (${u.no})의 모든 기록이 지워집니다.`, [{ label: "아니오", soft: true }, { label: "삭제", onClick: () => {
     U.list = U.list.filter(x => x.id !== id); saveUsers(); try { localStorage.removeItem(dataKey(id)); } catch (e) { }
     if (id === curId) logout(); stack.pop(); go("admin", {}, false);
@@ -1014,6 +1128,20 @@ window.addEventListener("popstate", () => {
 const _go = go;
 go = function (name, params, replace) { _go(name, params, replace); pushGuard(); };
 (function boot() {
+  if (Cloud.on) {
+    $("#screen").innerHTML = `<div class="body" style="min-height:100vh;justify-content:center;align-items:center"><img src="assets/logo.png" alt="HWARO" style="width:160px"><div class="typing" style="display:flex"><i></i><i></i><i></i></div></div>`;
+    let first = true;
+    Cloud.auth.onAuthStateChanged(async user => {
+      if (!first) return; first = false;
+      try {
+        if (user && Cloud.isClient(user)) { await enterCloudUser(user.uid); diagState = null; if (diagDue()) _go("diag", {}, true); else home(); }
+        else if (user && await Cloud.isAdmin(user.email)) { adminOk = true; _go("admin", {}, true); }
+        else { if (user) await Cloud.auth.signOut(); curId = null; S = null; _go("login", {}, true); }
+      } catch (e) { console.warn(e); curId = null; S = null; _go("login", {}, true); toast(Cloud.msg(e)); }
+      pushGuard();
+    });
+    return;
+  }
   if (curId && userById(curId)) { loginAs(curId); if (diagDue()) _go("diag", {}, true); else home(); }
   else { logout(); _go("login", {}, true); }
   pushGuard();
