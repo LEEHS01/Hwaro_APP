@@ -67,7 +67,7 @@ const Cloud = {
     }, 500);
   },
   async flush() { if (this.saveT) { clearTimeout(this.saveT); this.saveT = null; } },
-  async logout() { if (this.unsubResults) { this.unsubResults(); this.unsubResults = null; } await this.auth.signOut(); },
+  async logout() { if (this.unsubResults) { this.unsubResults(); this.unsubResults = null; } if (this.unsubContent) { this.unsubContent(); this.unsubContent = null; } await this.auth.signOut(); },
 
   /* ── 관리자 ── */
   async adminLogin(email, pw) { await this.auth.signInWithEmailAndPassword(email, pw); return this.isAdmin(email); },
@@ -89,6 +89,7 @@ const Cloud = {
 
   /* ── 콘텐츠 (관리자가 수정하는 영상·병원·긴급전화·상담사·공지) content/app ── */
   async loadContent() { try { const s = await this.db.collection("content").doc("app").get(); return s.exists ? s.data() : null; } catch (e) { console.warn("콘텐츠 불러오기 실패", e); return null; } },
+  subscribeContent(cb) { if (this.unsubContent) this.unsubContent(); this.unsubContent = this.db.collection("content").doc("app").onSnapshot(s => cb(s.exists ? s.data() : null), e => console.warn("콘텐츠 구독 실패", e)); },
   async saveContent(c, by) { await this.db.collection("content").doc("app").set({ ...c, by: by || "", updatedAt: firebase.firestore.FieldValue.serverTimestamp() }); },
   // data.js의 상수 배열을 제자리에서 교체 (const라서 splice 사용). 비어 있는 항목은 기본값 유지
   applyContent(c) {

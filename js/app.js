@@ -62,7 +62,7 @@ async function enterCloudUser(uid) {
   saveData(uid, S);
   // 관리자가 바꾼 콘텐츠(영상·병원·전화·상담사·공지): 캐시 먼저 적용, 서버값 오면 갱신
   try { const cc = lsGet("hwaro_content"); if (cc) Cloud.applyContent(JSON.parse(cc)); } catch (e) { }
-  Cloud.loadContent().then(c => { if (!c) return; const { updatedAt, ...rest } = c; lsSet("hwaro_content", JSON.stringify(rest)); Cloud.applyContent(rest); if (current) render(); });
+  Cloud.subscribeContent(c => { if (!c) return; const { updatedAt, ...rest } = c; lsSet("hwaro_content", JSON.stringify(rest)); Cloud.applyContent(rest); if (current) render(); });   // 관리자가 저장하면 즉시 반영
   Cloud.subscribeResults(uid, list => { S.results = list; saveData(uid, S); if (current && ["home", "results", "care", "connect"].includes(current.name)) render(); });
   // 상담사의 예약 승인·변경·취소 반영
   Cloud.db.collection("users").doc(uid).collection("approvals").onSnapshot(q => {
