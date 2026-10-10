@@ -1218,7 +1218,7 @@ go = function (name, params, replace) { _go(name, params, replace); pushGuard();
       if (!first) return; first = false;
       try {
         if (user && Cloud.isClient(user)) { await enterCloudUser(user.uid); diagState = null; if (diagDue()) _go("diag", {}, true); else home(); }
-        else if (user && await Cloud.isAdmin(user.email)) { adminOk = true; _go("admin", {}, true); }
+        else if (user && await Cloud.isAdmin(user.email)) { location.replace("admin.html"); return; }   // 관리자 계정은 PC용 관리자 콘솔로
         else { if (user) await Cloud.auth.signOut(); curId = null; S = null; _go("login", {}, true); }
       } catch (e) { console.warn(e); curId = null; S = null; _go("login", {}, true); toast(Cloud.msg(e)); }
       pushGuard();
