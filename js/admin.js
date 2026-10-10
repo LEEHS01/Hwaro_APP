@@ -367,7 +367,7 @@ function apptRow(a, isNext) {
   const hint = topicHint(a.uid);
   return `<div class="srow ${isNext ? "next" : ""}"><span class="t">${fmtT(e.time)}</span><div><b>${esc(a.name)} · ${last ? last.no : a.sessionNo}회차</b>
     <div class="faint">${a.type}${done ? " · 완료" : last && last.topic ? ` · 주제: ${esc(last.topic)}` : hint ? ` · 주제 후보 <b>${hint}</b>` : ""}${e.changed ? " · 변경됨" : ""}</div>
-    ${done ? "" : `<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${!(ap?.status === "confirmed" || ap?.date) ? '<span class="chip gray">승인 대기</span>' : ""}${isNext ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">${ICON.play} 상담 시작</button>` : ""}</div>`}</div></div>`;
+    ${done ? "" : `<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${!(ap?.status === "confirmed" || ap?.date) ? '<span class="chip gray">승인 대기</span>' : ""}${a.date === todayStr() && a.type === "화상" ? `<button class="btn ${isNext ? "primary" : "outline"} sm" onclick="openCall('${a.uid}','${a.id}')">${ICON.play} 상담 시작</button>` : isNext ? `<button class="btn primary sm" onclick="selectUser('${a.uid}');A.tab='comments';render()">${ICON.play} 기록 열기</button>` : ""}</div>`}</div></div>`;
 }
 function schedulePanel() {
   const t = todayStr(), all = allAppts().map(effAppt), mon = addDays(t, -((parse(t).getDay() + 6) % 7));
@@ -428,7 +428,7 @@ function showNotis() {
     ${!risky.length && !pend.length ? `<div class="empty">새 알림이 없습니다</div>` : ""}`);
 }
 async function approve(uid, apptId) { try { await Cloud.db.collection("users").doc(uid).collection("approvals").doc(apptId).set({ status: "confirmed", by: A.email, at: new Date().toISOString() }); (A.approvals[uid] = A.approvals[uid] || {})[apptId] = { status: "confirmed" }; toast("승인했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); } }
-function apptLine(a) { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}${a.changed ? ' <span class="chip gray">변경됨</span>' : ""}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button><button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }
+function apptLine(a) { const ap = (A.approvals[a.uid] || {})[a.id]; return `<div class="srow"><span class="t">${fmtT(a.time)}</span><div><b>${esc(a.name)}</b> · ${a.sessionNo}회차 · ${a.type} · ${counselor(a.cid).name}${a.changed ? ' <span class="chip gray">변경됨</span>' : ""}<div class="acts">${ap?.status === "confirmed" || ap?.date ? '<span class="chip">승인</span>' : `<button class="btn primary sm" onclick="approve('${a.uid}','${a.id}')">승인</button><span class="chip gray">승인 대기</span>`}<button class="btn outline sm" onclick="openChange('${a.uid}','${a.id}')">변경</button>${a.date === todayStr() && a.type === "화상" ? `<button class="btn primary sm" onclick="openCall('${a.uid}','${a.id}')">${ICON.play} 상담 시작</button>` : ""}<button class="btn outline sm" onclick="A.view='clients';selectUser('${a.uid}')">내담자 열기</button></div></div></div>`; }
 function schedMove(n) { const d = A.schedDate || todayStr(); A.schedDate = A.schedMode === "day" ? addDays(d, n) : A.schedMode === "week" ? addDays(d, 7 * n) : ymd(new Date(parse(d).getFullYear(), parse(d).getMonth() + n, 1)); render(); }
 function scheduleView() {
   const t = todayStr(), d = A.schedDate || t, mode = A.schedMode;
@@ -756,6 +756,28 @@ async function saveContentAll() {
   const ids = c.counselors.map(x => x.id); if (new Set(ids).size !== ids.length) return toast("상담사 ID가 중복됩니다");
   try { await Cloud.saveContent(c, A.email); Cloud.applyContent(c); A.content = normContent(c); toast("앱에 저장했습니다"); render(); } catch (e) { toast(Cloud.msg(e)); }
 }
+
+/* ── 화상 상담 (Jitsi Meet, meet.jit.si) — 내담자 앱과 같은 방 이름 "hwaro-{등록번호}-{예약ID}" ── */
+const callRoomOf = (u, a) => "hwaro-" + String(u.no || "").replace(/[^A-Za-z0-9]/g, "") + "-" + String(a.id).replace(/[^A-Za-z0-9]/g, "");
+let jitsiApi = null;
+function loadJitsiApi() { return new Promise((ok, fail) => { if (window.JitsiMeetExternalAPI) return ok(); const s = document.createElement("script"); s.src = "https://meet.jit.si/external_api.js"; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); }
+async function openCall(uid, apptId) {
+  const u = (A.users || []).find(x => x.uid === uid), a = (u?.data?.appts || []).find(x => x.id === apptId); if (!u || !a) return;
+  const room = callRoomOf(u, a), url = "https://meet.jit.si/" + room, name = SET.cid ? `${counselor(SET.cid).name} ${counselor(SET.cid).title}` : SET.name || "상담자";
+  modal(`<div class="panel-h" style="margin:0"><h3>화상 상담 · ${esc(u.name)} <span class="faint">${u.no} · ${fmtT(a.time)} · ${(A.results[uid] || []).length + 1}회차</span></h3>
+      <div style="display:flex;gap:6px"><a class="btn outline sm" href="${url}" target="_blank" rel="noopener">새 창에서 열기</a><button class="btn outline sm" onclick="closeCall();selectUser('${uid}');A.tab='comments';openSoapForm()">회차 기록 작성</button><button class="btn primary sm" onclick="closeCall()">종료</button></div></div>
+    <div class="jitsi-box" id="adm-jitsi"><div class="empty" style="color:#ccc">화상 방에 입장하는 중…</div></div>
+    <div class="faint">내담자가 앱에서 "상담시작"을 누르면 같은 방에 들어옵니다. 처음 입장 시 Jitsi가 진행자 로그인(구글 계정 등)을 요구하면 상담자가 한 번 로그인하면 됩니다. 방 이름: <span class="mono">${room}</span></div>`);
+  $(".modal").style.maxWidth = "min(1000px, 96vw)";
+  try {
+    await loadJitsiApi(); const box = $("#adm-jitsi"); box.innerHTML = "";
+    jitsiApi = new JitsiMeetExternalAPI("meet.jit.si", { roomName: room, parentNode: box, width: "100%", height: "100%", lang: "ko", userInfo: { displayName: name },
+      configOverwrite: { prejoinConfig: { enabled: false }, subject: `HWARO 상담 · ${u.name}`, startWithAudioMuted: false, startWithVideoMuted: false },
+      interfaceConfigOverwrite: { SHOW_JITSI_WATERMARK: false, SHOW_BRAND_WATERMARK: false, MOBILE_APP_PROMO: false } });
+    jitsiApi.addListener("readyToClose", closeCall);
+  } catch (e) { const box = $("#adm-jitsi"); if (box) box.innerHTML = `<div class="empty" style="color:#ccc">화상 화면을 불러오지 못했습니다. "새 창에서 열기"를 눌러 주세요.</div>`; }
+}
+function closeCall() { if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; } closeModal(); }
 
 /* ── 종결 처리: users/{uid}.status = "closed" (내담자 앱 데이터는 그대로, 목록·통계에서 "종결"로 분류) ── */
 function openClose(uid) {

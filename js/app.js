@@ -998,31 +998,44 @@ function startCall() {
   const a = upcoming().filter(x => x.type === "화상")[0];
   if (!a) return modal("예약날짜가 아닙니다.", "예약된 화상 상담이 없습니다.\n화상 상담을 먼저 예약해 주세요.", [{ label: "닫기", soft: true }, { label: "예약하기", onClick: () => go("booking", {}, true) }]);
   if (a.date !== todayStr()) return modal("예약날짜가 아닙니다.", `상담 예정일: ${dots(a.date)} ${a.time}\n(D-${daysBetween(todayStr(), a.date)})`);
-  modal("화상통화 시작", `${counselor(a.cid).name} ${counselor(a.cid).title}과 화상 상담을 시작할까요?\n시작 전 상담 동의서를 확인합니다.`, [{ label: "취소", soft: true }, { label: "시작", onClick: () => { consentOk = false; go("consent", { next: "call" }); } }]);
+  modal("화상통화 시작", `${counselor(a.cid).name} ${counselor(a.cid).title}과 화상 상담을 시작할까요?\n시작 전 상담 동의서를 확인합니다.\n(카메라·마이크 사용 허용이 필요합니다)`, [{ label: "취소", soft: true }, { label: "시작", onClick: () => { consentOk = false; go("consent", { next: "call" }); } }]);
 }
 
-/* ── 화상 상담 (p.25) ── */
-let callT = null, callStream = null;
+/* ── 화상 상담 (p.25) — Jitsi Meet (meet.jit.si) 무료 방 사용. 관리자 "상담 시작"과 같은 방 이름 ── */
+const callRoom = a => "hwaro-" + String((P && P.no) || userById(curId)?.no || "local").replace(/[^A-Za-z0-9]/g, "") + "-" + String(a ? a.id : "test").replace(/[^A-Za-z0-9]/g, "");
+let callT = null, jitsiApi = null;
+function loadJitsiApi() { return new Promise((ok, fail) => { if (window.JitsiMeetExternalAPI) return ok(); const s = document.createElement("script"); s.src = "https://meet.jit.si/external_api.js"; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); }
 VIEWS.call = ({ id }) => {
-  const a = S.appts.find(x => x.id === id), c = counselor(a ? a.cid : S.lastCid);
+  const a = S.appts.find(x => x.id === id), c = counselor(a ? a.cid : S.lastCid), room = callRoom(a);
   return { noTab: true, html: `<div class="call">
-    <div class="remote">
+    <div class="remote" id="jitsi-box">
       <div class="timer" id="call-timer">연결 중…</div>
-      <div class="who"><div class="av" style="background:${c.color}">${c.name[0]}</div><div style="font-size:20px">${c.name} ${c.title}</div><div style="opacity:.7;font-size:13px;margin-top:4px">HWARO 화상 상담</div></div>
-      <div class="local"><video id="local-v" autoplay muted playsinline></video></div>
+      <div class="who" id="call-wait"><div class="av" style="background:${c.color}">${c.name[0]}</div><div style="font-size:20px">${c.name} ${c.title}</div><div style="opacity:.7;font-size:13px;margin-top:4px">화상 상담 방에 입장하는 중입니다</div></div>
     </div>
     <div class="ctrl">
-      <button id="mic-btn" onclick="toggleMic()" aria-label="마이크"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button onclick="window.open('https://meet.jit.si/${room}','_blank')" aria-label="브라우저에서 열기" title="브라우저에서 열기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 4h6v6M20 4l-9 9M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></button>
       <button class="end" onclick="endCall('${id}')" aria-label="종료"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.6 14.4a15 15 0 0 1 16.8 0l-2.1 2.1a1 1 0 0 1-1.1.2l-2.6-1.2a1 1 0 0 1-.6-.9v-1.9a11 11 0 0 0-4 0v1.9a1 1 0 0 1-.6.9l-2.6 1.2a1 1 0 0 1-1.1-.2z"/></svg></button>
       <button onclick="go('chat')" aria-label="채팅"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H9l-5 4z"/></svg></button>
     </div></div>`, after: async () => {
-      let sec = 0; callT = setInterval(() => { sec++; const el = $("#call-timer"); if (el) el.textContent = `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}`; }, 1000);
-      try { callStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true }); const v = $("#local-v"); if (v) v.srcObject = callStream; } catch (e) { }
+      let sec = 0; clearInterval(callT); callT = setInterval(() => { sec++; const el = $("#call-timer"); if (el) el.textContent = `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}`; }, 1000);
+      try {
+        await loadJitsiApi();
+        const box = $("#jitsi-box"); if (!box) return;
+        jitsiApi = new JitsiMeetExternalAPI("meet.jit.si", { roomName: room, parentNode: box, width: "100%", height: "100%", lang: "ko",
+          userInfo: { displayName: S.user.name + " (내담자)" },
+          configOverwrite: { prejoinConfig: { enabled: false }, disableDeepLinking: true, startWithAudioMuted: false, startWithVideoMuted: false, subject: "HWARO 화상 상담", toolbarButtons: ["microphone", "camera", "hangup", "tileview", "chat", "settings", "fullscreen"] },
+          interfaceConfigOverwrite: { MOBILE_APP_PROMO: false, SHOW_JITSI_WATERMARK: false, SHOW_BRAND_WATERMARK: false, DEFAULT_BACKGROUND: "#1b1b1b" } });
+        const w = $("#call-wait"); if (w) w.remove();
+        const tm = $("#call-timer"); if (tm) tm.style.zIndex = 2;
+        jitsiApi.addListener("videoConferenceLeft", () => endCall(id));
+        jitsiApi.addListener("readyToClose", () => endCall(id));
+      } catch (e) {
+        const w = $("#call-wait"); if (w) w.innerHTML = `<div style="font-size:16px;line-height:1.6">화상 화면을 불러오지 못했습니다.<br><span style="opacity:.7;font-size:13px">인터넷 연결을 확인하거나, 아래 왼쪽 버튼으로 브라우저에서 여세요.</span></div>`;
+      }
     } };
 };
-function toggleMic() { if (!callStream) return; const t = callStream.getAudioTracks()[0]; if (!t) return; t.enabled = !t.enabled; $("#mic-btn").classList.toggle("off", !t.enabled); }
 function endCall(id) {
-  clearInterval(callT); if (callStream) { callStream.getTracks().forEach(t => t.stop()); callStream = null; }
+  clearInterval(callT); if (jitsiApi) { try { jitsiApi.dispose(); } catch (e) { } jitsiApi = null; }
   modal("상담을 종료할까요?", "", [{ label: "계속하기", soft: true, onClick: () => render() }, { label: "종료", onClick: () => {
     const a = S.appts.find(x => x.id === id); if (a) { a.status = "done"; save(); }
     stack = []; current = { name: "home", params: {} }; render();
